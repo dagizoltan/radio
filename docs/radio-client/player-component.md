@@ -49,6 +49,10 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   Loop `reader.read()`. As each `Uint8Array` chunk arrives:
         *   Pass the chunk to the WASM decoder: `const pcm = decoder.push(chunk)`.
         *   If `pcm` (an `Float32Array`) has length > 0, post it to the worklet: `workletNode.port.postMessage(pcm, [pcm.buffer])` (transferring ownership for performance).
-5.  **Quality Switching:** If the user changes the quality mid-stream, the current `reader.cancel()` is called. The `currentQuality` state updates, and the fetch loop immediately attempts to fetch the *same* `currentIndex` but using the new quality path, ensuring a seamless transition.
+5.  **Quality Switching:** If the user changes the quality mid-stream:
+    *   The current `reader.cancel()` is called.
+    *   A `"FLUSH"` message is sent to the `AudioWorklet` via `postMessage` to instantly clear any buffered PCM data. This prevents an audible pitch-shift or pop when the new codec chunks arrive.
+    *   The `currentQuality` state updates.
+    *   The fetch loop immediately attempts to fetch the *same* `currentIndex` using the new quality path (`hq` FLAC or `lq` MP3).
 6.  **Iteration:** When `reader.read()` returns `done: true` normally, increment the `currentIndex`.
-6.  **Latency Display:** Calculate and update the UI with the estimated latency: `(latest - currentIndex) * segment_s` seconds behind live.
+7.  **Latency Display:** Calculate and update the UI with the estimated latency: `(latest - currentIndex) * segment_s` seconds behind live.

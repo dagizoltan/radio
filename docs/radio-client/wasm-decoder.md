@@ -13,6 +13,8 @@ Specifically, it only handles:
 *   16-bit stereo.
 *   No LPC, no Rice coding, no other subframe types.
 
+*(Note: To support the Low Quality stream, the `decoder/` package will also export an `Mp3Decoder` class. This decoder uses a lightweight, pure-Rust MP3 decoding crate like `minimp3-rs` and follows the identical chunk-streaming API as the `FlacDecoder`.)*
+
 ## FlacDecoder Struct
 
 The `FlacDecoder` struct maintains state across chunk pushes:

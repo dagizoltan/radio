@@ -42,12 +42,13 @@ Handles direct hardware capture and local uncompressed archiving.
 Consumes the raw stream, normalizes it, and encodes it into multiple qualities (HQ and LQ).
 
 1.  Subscribes to the raw broadcast channel.
-2.  Initializes the `Normalizer` and multiple `FlacEncoder` instances (one for normalized HQ, one down-sampled/down-bitrate for LQ).
-3.  Loops, receiving raw FLAC frames and extracting the interleaved `i16` buffer.
-4.  Copies the raw buffer to a new mutable buffer and calls `normalizer.process(&mut buffer)`.
-5.  Encodes the normalized buffer into the respective HQ and LQ FLAC streams.
-6.  Emits the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
-7.  **Segment Assembly:** Accumulates the encoded frames for both qualities. When the target 10-second duration is reached (based on PCM sample count equivalent):
+2.  Initializes the `Normalizer`.
+3.  Initializes the audio encoders: one `FlacEncoder` for the normalized HQ stream, and one MP3 encoder (e.g., using a pure-Rust MP3 library set to 192kbps stereo) for the LQ stream.
+4.  Loops, receiving raw FLAC frames and extracting the interleaved `i16` buffer.
+5.  Copies the raw buffer to a new mutable buffer and calls `normalizer.process(&mut buffer)`.
+6.  Encodes the normalized buffer simultaneously into the respective HQ (FLAC) and LQ (MP3) streams.
+7.  Emits the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
+8.  **Segment Assembly:** Accumulates the encoded frames for both qualities. When the target 10-second duration is reached (based on PCM sample count equivalent):
     *   Assembles complete, standalone FLAC files in memory by prepending the respective stream headers.
     *   Broadcasts the completed HQ and LQ segment files (as `Bytes`) over dedicated segment channels to the Cloud Uploader.
 
@@ -55,15 +56,17 @@ Consumes the raw stream, normalizes it, and encodes it into multiple qualities (
 
 Receives completed segments and handles S3 uploads and manifest management.
 
-1.  Subscribes to the completed HQ and LQ segment broadcast channels.
-2.  Loops, receiving assembled segment files.
-3.  **Upload:**
+1.  **Startup Cleanup:** Before processing any new segments, performs a `LIST` and `DELETE` operation on the bucket prefixes (`live/hq/` and `live/lq/`) to remove any orphaned segments from a previous crashed session.
+2.  Subscribes to the completed HQ and LQ segment broadcast channels.
+3.  Loops, receiving assembled segment files.
+4.  **Upload:**
     *   Uploads the segments to S3 using raw HTTP with [AWS Signature V4](aws-sig-v4.md).
-    *   Key format uses quality folders: e.g., `live/hq/segment-{:06}.flac` and `live/lq/segment-{:06}.flac`.
+    *   **Resilience:** Uses an exponential backoff retry loop (e.g., 3-5 retries) for the HTTP PUT requests to handle transient network drops.
+    *   Key format uses quality folders: e.g., `live/hq/segment-{:06}.flac` and `live/lq/segment-{:06}.mp3`.
     *   Writes `live/manifest.json` containing metadata for both streams: `{"live": true, "latest": index, "segment_s": 10, "updated_at": timestamp, "qualities": ["hq", "lq"]}`.
-4.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 3 segments per quality, it issues `DELETE` requests for the oldest objects.
-5.  Pushes the new HQ segment into `local_segments` (keeping only the last 3) for the local operator monitor playback.
-6.  Updates `r2_segment`, `r2_last_ms`, and `r2_uploading`. Emits `r2` status events to `sse_tx` during and after the upload.
+5.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 3 segments per quality, it issues `DELETE` requests for the oldest objects.
+6.  Pushes the new HQ segment into `local_segments` (keeping only the last 3) for the local operator monitor playback.
+7.  Updates `r2_segment`, `r2_last_ms`, and `r2_uploading`. Emits `r2` status events to `sse_tx` during and after the upload.
 
 ### HTTP Task
 

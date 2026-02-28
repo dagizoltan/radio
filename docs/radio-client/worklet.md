@@ -18,7 +18,9 @@ It exposes a `"volume"` parameter via the `parameterDescriptors` static getter, 
 
 The main thread sends `Float32Array` chunks (interleaved stereo PCM from the WASM decoder) to the worklet via `this.port.postMessage`.
 
-The worklet implements `this.port.onmessage = (event) => { ... }` to receive these chunks and push them onto the back of its internal queue.
+The worklet implements `this.port.onmessage = (event) => { ... }` to receive these messages.
+*   If the message contains a `Float32Array`, it pushes the chunk onto the back of its internal queue.
+*   If the message is a specific string command (e.g., `"FLUSH"`), it immediately empties the internal queue and resets the read offset to 0. This is critical for preventing audio artifacts when the user switches stream qualities mid-playback.
 
 ## Output Processing
 

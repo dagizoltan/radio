@@ -46,5 +46,18 @@ The server and client use path-style S3 URLs (`{endpoint}/{bucket}/{key}`) inste
 
 The R2 Uploader actively maintains a queue of uploaded segments and issues `DELETE` requests for the oldest segments.
 
-*   **Rationale:** Cloudflare R2 does not have a native, immediate Time-to-Live (TTL) feature that deletes objects precisely when they expire. To prevent unbounded storage growth for a continuous live stream, the server must manage the lifecycle manually. A rolling window ensures exactly 3 segments are stored at any time, capping storage at approximately 4.5 MB.
+*   **Rationale:** Cloudflare R2 does not have a native, immediate Time-to-Live (TTL) feature that deletes objects precisely when they expire. To prevent unbounded storage growth for a continuous live stream, the server must manage the lifecycle manually. A rolling window ensures exactly 3 segments are stored per quality stream at any time.
+    *   *Startup Cleanup:* To prevent "orphaned" segments resulting from an abrupt crash where the rolling window queue in RAM is lost, the server executes a one-time "cleanup sweep" of the S3 bucket prefixes (`live/hq/` and `live/lq/`) upon startup, issuing `DELETE`s for all existing segments before resuming broadcast.
 *   **Constraint:** Rolling window, not TTL. The uploader maintains a `VecDeque` of uploaded keys and deletes the oldest immediately when the window exceeds 3 segments.
+
+## Why MP3 for the LQ stream?
+
+The Converter process explicitly encodes the lower-quality (LQ) fallback stream as a high-resolution, stereo MP3 (e.g., 192kbps).
+
+*   **Rationale:** To provide a viable low-bandwidth fallback without breaking the "clean Rust architecture" rule, we need an encoder that is available in pure Rust (or highly portable and easily vendored). MP3 offers excellent compatibility and significant bandwidth reduction while maintaining full stereo width (vs downsampling PCM). A lightweight pure-Rust WASM MP3 decoder (like `minimp3-rs`) can be bundled alongside the FLAC decoder, keeping the `AudioWorklet` chunk-streaming architecture perfectly identical for both formats.
+
+## Why explicitly flush the AudioWorklet on quality switch?
+
+When a listener toggles the Quality Selector (HQ ↔ LQ), the player immediately flushes the `AudioWorklet`.
+
+*   **Rationale:** The `AudioWorklet` queue buffers `f32` PCM arrays. If the user switches qualities, there might be 1-2 seconds of HQ audio left in the queue. Appending LQ-decoded chunks directly behind the pending HQ chunks (especially if a codec introduced slight padding/delay differences) can cause an audible pop or phase alignment jump. By sending a `FLUSH` command via `postMessage`, the worklet clears its queue, ensuring a clean break and a glitch-free transition to the new stream quality.
