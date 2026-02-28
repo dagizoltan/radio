@@ -1,0 +1,81 @@
+# Architecture Overview
+
+The Lossless Vinyl Radio Streaming System is a two-part architecture designed to capture analog audio, encode it losslessly to FLAC, archive it locally, and stream it to listeners worldwide with minimal latency.
+
+## System Diagram
+
+```text
+[ Analog Source ]
+       |
+       v (REC OUT)
+[ UMC404HD USB Interface ]
+       |
+       v (USB / ALSA)
++-----------------------------------------------------------+
+| Lenovo ThinkPad X270 (Ubuntu Linux)                       |
+|                                                           |
+|  +-----------------------------------------------------+  |
+|  | radio-server (Rust)                                 |  |
+|  |                                                     |  |
+|  |  [ Capture ] -> [ Raw Encoder ] -> [ Local Archive ]|  |
+|  |       |                                             |  |
+|  |       v                                             |  |
+|  |  [ Normalizer ] -> [ Encoder ] -> [ R2 Uploader ]   |  |
+|  |                                                     |  |
+|  |  [ HTTP/SSE Monitor UI ]                            |  |
+|  +-----------------------------------------------------+  |
+|           |                                               |
+|           v (S3 API)                                      |
+|  [ Docker: MinIO (Development) ]                          |
++-----------------------------------------------------------+
+       | (Production: Cloudflare R2)
+       v
+[ Cloudflare R2 ] (Live FLAC segments & Manifest)
+       |
+       v
++-----------------------------------------------------------+
+| Deno Deploy                                               |
+|                                                           |
+|  +-----------------------------------------------------+  |
+|  | radio-client (Deno + Hono)                          |  |
+|  |                                                     |  |
+|  |  [ SSR Frontend ]  <-- Fetches Manifest             |  |
+|  |  [ Segment Proxy ] <-- Fetches FLAC segments        |  |
+|  +-----------------------------------------------------+  |
++-----------------------------------------------------------+
+       |
+       v
+[ Browser Listener ]
+   |
+   +-- <radio-player> Web Component
+   +-- WASM FLAC Decoder
+   +-- AudioWorklet
+```
+
+## Signal Flow End-to-End
+
+1. **Analog Capture:** The analog mixer's REC OUT is connected to inputs 1 and 2 of the Behringer UMC404HD USB audio interface.
+2. **ALSA Interface:** The `radio-server` captures the audio directly from the Linux kernel ALSA interface using raw ioctls.
+3. **Raw Encoding & Archiving:** The raw PCM audio is encoded into FLAC verbatim subframes and saved to a local `./recordings` directory. This ensures the archive is a bit-perfect, unprocessed copy of the capture.
+4. **Normalization & Streaming:** The raw audio is simultaneously passed through a [two-stage normalizer](../radio-server/normalizer.md) (LUFS gain rider and true-peak limiter). The normalized audio is encoded into FLAC and grouped into 10-second segments.
+5. **R2 Upload:** Segments and a `manifest.json` are uploaded to an S3-compatible storage backend ([Cloudflare R2 in production, MinIO locally](../deployment/docker-compose.md)). The uploader maintains a rolling window of 3 segments.
+6. **Listener Client:** The listener visits the Deno Deploy frontend (`radio-client`). The frontend fetches the manifest and serves the HTML shell.
+7. **Browser Playback:** The browser loads a Web Component island that continuously polls the manifest and fetches FLAC segments via the Deno proxy. The segments are decoded in the browser using a [WASM FLAC decoder](../radio-client/wasm-decoder.md) and played via an [AudioWorklet](../radio-client/worklet.md).
+
+## Two-Codebase Split
+
+The system is strictly divided into two independent codebases:
+
+1. **`radio-server`:** A pure Rust binary running locally on the ThinkPad. It handles hardware capture, encoding, normalization, local archiving, R2 uploading, and serving a local operator monitor UI.
+2. **`radio-client`:** A Deno + Hono application deployed to Deno Deploy. It serves the public listener interface, proxies segments from R2, and provides the Web Component and WASM decoder for browser playback.
+
+## Docker Topology
+
+For local development, the entire system is orchestrated using Docker Compose. The topology consists of four services:
+
+*   **`minio`:** Provides S3-compatible storage, standing in for Cloudflare R2.
+*   **`minio-setup`:** A temporary container that configures the `minio` bucket and policies.
+*   **`radio`:** The Rust server capturing audio, encoding it, and uploading to `minio`.
+*   **`client`:** The Deno proxy and frontend, fetching from `minio` and serving the web listener interface.
+
+See the [Docker Compose Documentation](../deployment/docker-compose.md) for full details.
