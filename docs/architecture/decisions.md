@@ -105,8 +105,23 @@ The cloud storage bucket (R2/MinIO) enforces a strict Cross-Origin Resource Shar
 
 *   **Rationale:** Because the `radio-client` Web Component fetches segments directly from the bucket (to bypass the Deno proxy and save bandwidth), the bucket must explicitly allow cross-origin `GET` requests from the Deno Deploy frontend URL, preventing unauthorized embedding or leeching from other domains.
 
-## Archival Storage Rotation
+## Archival Storage Rotation (Cold Storage)
 
 The ThinkPad running the `radio-server` requires a rotation strategy for the pristine `./recordings` directory.
 
-*   **Rationale:** The HQ Recorder process generates a bit-perfect 24-bit/48kHz FLAC copy of the stream. This consumes roughly 1.5 GB to 2 GB per hour. To prevent the local drive from filling up over continuous broadcast periods, the system must rely on an external rotation mechanism (e.g., a cron job moving old recordings to cold storage/NAS) rather than attempting to manage this within the Rust process itself.
+*   **Rationale:** The HQ Recorder process generates a bit-perfect 24-bit/48kHz FLAC copy of the stream. This consumes roughly 1.5 GB to 2 GB per hour. To prevent the local drive from filling up over continuous broadcast periods, the system must securely offload these archives.
+*   **Implementation Strategy:** The system will use a secondary, separate S3-compatible bucket specifically for "cold storage" (e.g., a second Cloudflare R2 bucket in production, or a second MinIO bucket in local development). A daily automated cron job or systemd timer on the ThinkPad will upload the completed 24-hour recordings to this archive bucket and then delete them locally, entirely separating the live broadcast cloud infrastructure from the long-term archival storage.
+
+## Observability and Telemetry
+
+The architecture relies heavily on separate, independent processes working in tandem.
+
+*   **Rationale:** Without centralized metrics, debugging a silent failure (e.g., the capture crate stalls, or R2 uploads begin failing) is incredibly difficult.
+*   **Implementation Strategy:** The server must expose a minimal set of telemetry metrics (e.g., capture buffer overruns, normalizer LUFS targets, upload success/failure rates, rolling window size). These can be simple Prometheus-style `/metrics` endpoints pulled locally, or piped directly to the local operator UI. The Deno client should also report back basic playback stall metrics to an analytics endpoint to measure real-world listener experience.
+
+## Graceful Degradation (Auto-Bitrate Switching)
+
+The client must automatically handle degraded network conditions without manual user intervention.
+
+*   **Rationale:** While the HQ FLAC stream is the priority, a mobile listener entering an area with poor signal will experience constant buffering. Expecting the user to manually click an "LQ MP3" button is a poor user experience.
+*   **Implementation Strategy:** The Web Component's custom fetch loop must measure the download time of each 10-second chunk. If the fetch time consistently exceeds a safe threshold (e.g., it takes 8 seconds to download 10 seconds of audio), the client should automatically pivot to fetching from the LQ manifest. If network conditions improve and stabilize for several minutes, it can attempt an opportunistic pivot back to the HQ stream.
