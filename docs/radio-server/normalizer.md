@@ -14,6 +14,7 @@ The first stage targets a consistent -14 LUFS level by adjusting the overall gai
     *   **Attack:** ~500ms time constant. This reacts relatively quickly when the signal gets louder (preventing prolonged clipping).
     *   **Release:** ~2000ms time constant. This reacts slowly when the signal gets quieter (preventing "pumping" artifacts during momentary lulls).
 6.  **Application:** The current smoothed gain is applied multiplicatively to every sample in the block.
+7.  **Warm-up State:** To prevent a massive +6dB gain jump when the process starts (because the 3-second RMS history window is initially empty/silence), the normalizer bypasses gain application (stays at 0dB adjustment) for the first 3 seconds until the window is fully populated with actual audio data.
 
 This stage preserves the original dynamics (transients) of the performance while gently riding the overall volume level to ensure consistency across different records or mixer settings.
 

@@ -19,12 +19,14 @@ The crate configures the ALSA device using raw kernel `ioctl`s wrapped by `rusti
 
 The device is opened with `O_RDWR | O_NONBLOCK`.
 
-*   **Format:** `FORMAT_S24_LE`
+*   **Format:** `FORMAT_S24_LE` (or `FORMAT_S32_LE` depending on hardware `hw_params`)
 *   **Access Mode:** `ACCESS_RW_INTERLEAVED`
 *   **Sample Rate:** 44100 Hz
 *   **Channels:** 2
 *   **Period Size:** 4096 frames
 *   **Buffer Size:** 4 periods
+
+*(Note: The `S24_LE` ALSA format uses 32-bit words (4 bytes per sample), where the audio data occupies the lower 24 bits and the top 8 bits are zero-padded. The hardware may natively expose `S32_LE` or `S24_3LE` (tightly packed 3 bytes). The implementer must log and check the supported formats and ensure the 24 bits are correctly extracted and packed tightly (3 bytes per sample) before verbatim FLAC encoding.)*
 
 ### #[repr(C)] Structs
 

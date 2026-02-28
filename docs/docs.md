@@ -142,3 +142,4 @@ The system design enforces several strict rules outlined below. Violating these 
 8.  **Path-style S3 URLs**: All S3 uploads via [AWS Sig V4](radio-server/aws-sig-v4.md) must use path-style URLs to ensure compatibility between MinIO and Cloudflare R2.
 9.  **ALSA device discovery is dynamic**: The [Capture Crate](radio-server/capture.md) finds the UMC404HD card number at runtime by parsing `/proc/asound/cards`.
 10. **Tokio AsyncFd for capture, not threads**: The capture loop must use `AsyncFd` for kernel-driven wakeups instead of a blocking polling loop, as detailed in the [Capture Crate](radio-server/capture.md) doc.
+11. **No SSE Proxying**: The public `radio-client` must only poll the `manifest.json`. It must **never proxy the `/events` SSE stream** to the public internet to respect Deno Deploy connection limits.

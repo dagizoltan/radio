@@ -36,6 +36,10 @@ The server acts as a proxy to the S3 bucket to avoid exposing the bucket directl
 
 *   **Action:** Serves static assets (`style.css`, `player.js`, `worklet.js`, `flac_decoder.js`, `flac_decoder_bg.wasm`) directly from the local `./static/` directory.
 
+### Proxying Constraints (SSE and Deno Deploy limits)
+
+**CRITICAL CONSTRAINT:** The Deno client is deployed to Deno Deploy, which has strict limits on long-lived connections (like WebSockets or Server-Sent Events). The Deno proxy server must strictly rely on standard HTTP polling to fetch the `manifest.json` and segments. It must **never** attempt to proxy the `/events` SSE stream from the Rust server to the public browser client. The SSE stream is exclusively for the local operator monitor UI (`localhost:8080`).
+
 ## Environment Variables
 
 The server relies on two critical environment variables:
