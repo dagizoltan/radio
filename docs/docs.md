@@ -136,7 +136,7 @@ The system design enforces several strict rules outlined below. Violating these 
 2.  **Two broadcast channels, not one**: The [Server Pipeline](radio-server/server.md) must use separate channels for raw and normalized frames. The [Normalizer](radio-server/normalizer.md) must never touch the local recorded audio.
 3.  **Rolling window, not TTL**: R2 does not have reliable instant TTL. The [R2 Uploader Task](radio-server/server.md) maintains exactly 3 segments, actively deleting older keys.
 4.  **Segments are complete FLAC files**: Every segment uploaded to R2 must contain the full FLAC stream header and be playable as a standalone file, as described in the [Encoder Spec](radio-server/encoder.md).
-5.  **WASM decoder is minimal**: The [WASM Decoder](radio-client/wasm-decoder.md) only parses verbatim subframes matching our specific block size/rate encoding. It does not implement full FLAC.
+5.  **WASM decoder is minimal**: The [WASM Decoder](radio-client/wasm-decoder.md) only parses verbatim subframes matching our specific block size/rate encoding (24-bit). It does not implement full FLAC.
 6.  **AudioWorklet for audio output**: The browser player must use an [AudioWorklet](radio-client/worklet.md) running on a dedicated thread, not the deprecated `ScriptProcessorNode`.
 7.  **Monitor is embedded**: The [Monitor UI](radio-server/monitor-ui.md) is a single, dependency-free HTML file compiled into the Rust binary via `include_str!()`.
 8.  **Path-style S3 URLs**: All S3 uploads via [AWS Sig V4](radio-server/aws-sig-v4.md) must use path-style URLs to ensure compatibility between MinIO and Cloudflare R2.

@@ -15,7 +15,7 @@ The `FlacEncoder` struct manages the stream configuration and provides two metho
 The `FlacEncoder` holds the configuration:
 *   Sample Rate: 44100
 *   Channels: 2
-*   Bits per sample: 16
+*   Bits per sample: 24
 *   Block Size: 4096
 *   Frame Counter: (internal state)
 
@@ -34,14 +34,14 @@ Each FLAC frame encodes one block of audio (4096 frames). It contains:
     *   Block size code (`0b0111`, indicating a 16-bit literal size follows).
     *   Sample rate code (`0b1100`, indicating a 24-bit literal rate follows).
     *   Channel assignment (`0b0001` for stereo left/right).
-    *   Bits-per-sample code (`0b100` for 16 bits).
+    *   Bits-per-sample code (`0b110` for 24 bits).
     *   UTF-8 encoded frame number (variable length, 1-6 bytes).
     *   Actual block size (16-bit, `4096 - 1`).
     *   Actual sample rate (24-bit, `44100`).
     *   **CRC-8** of the frame header bytes so far.
 3.  **Subframes:** One subframe per channel (left, then right).
     *   Subframe type byte (`0b00000010` indicating verbatim, 0 waste bits).
-    *   Raw 16-bit samples for that channel.
+    *   Raw 24-bit samples for that channel.
 4.  **CRC-16:** Of the entire frame, from the sync code to the end of the last subframe.
 
 ## BitWriter

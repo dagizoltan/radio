@@ -12,7 +12,7 @@ When the element is inserted into the DOM, `connectedCallback` fires:
 
 1.  **Render:** It populates `this.innerHTML` with the player's UI (if not already hydrated by SSR):
     *   A `<canvas>` element for the waveform.
-    *   A metadata section displaying the title and a Quality Selector toggle (e.g., `<select>` or buttons for `HQ` / `LQ`).
+    *   A metadata section displaying the title and a Quality Selector toggle (e.g., `<select>` or buttons for `HQ` / `LQ`). HQ displays "Hi-Res · 44.1kHz · 24-bit · FLAC", LQ displays "High Quality · 320kbps · MP3".
     *   A controls row containing a play/stop button, an animated live indicator dot, a latency display, and a volume `<input type="range">`.
 2.  **Event Binding:** It attaches click listeners to the play/stop button, input listeners to the volume slider, and change listeners to the Quality Selector.
 

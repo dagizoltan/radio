@@ -10,10 +10,10 @@ Specifically, it only handles:
 *   Verbatim subframes.
 *   Block size code `0b0111` (16-bit literal).
 *   Sample rate code `0b1100` (24-bit literal).
-*   16-bit stereo.
+*   24-bit stereo.
 *   No LPC, no Rice coding, no other subframe types.
 
-*(Note: To support the Low Quality stream, the `decoder/` package will also export an `Mp3Decoder` class. This decoder uses a lightweight, pure-Rust MP3 decoding crate like `minimp3-rs` and follows the identical chunk-streaming API as the `FlacDecoder`.)*
+*(Note: To support the Low Quality stream, the `decoder/` package will also export an `Mp3Decoder` class. This decoder uses a lightweight, pure-Rust MP3 decoding crate like `minimp3-rs` (supporting up to 320kbps) and follows the identical chunk-streaming API as the `FlacDecoder`.)*
 
 ## FlacDecoder Struct
 
@@ -52,8 +52,8 @@ For each frame in the loop:
     *   CRC-8 (must match).
 3.  **Subframe Decode:** Decode two verbatim subframes (Left, then Right).
     *   Read subframe header byte.
-    *   Read `block_size` number of samples at `bps` bits each.
-    *   Sign-extend the 16-bit two's complement value to an `i32`.
+    *   Read `block_size` number of samples at `bps` bits each (e.g., 24 bits).
+    *   Sign-extend the 24-bit two's complement value to an `i32`.
 4.  **Byte Alignment:** Align the reader to a byte boundary after subframes.
 5.  **CRC-16:** Read the trailing CRC-16.
 6.  **Sufficiency Check:** *Crucially, before committing to a frame decode, the decoder must check if enough bytes exist in the buffer to complete the entire frame (header + samples + CRC).* If not, it breaks the loop and waits for the next `push()`.
@@ -64,7 +64,7 @@ The crate implements a `BitReader` struct that takes a byte slice and allows rea
 
 ## Normalization
 
-The extracted 16-bit integer samples (`i32` internally) must be normalized to `f32` floats in the range `[-1.0, 1.0]` before returning them to JavaScript (as required by the Web Audio API).
+The extracted 24-bit integer samples (`i32` internally) must be normalized to `f32` floats in the range `[-1.0, 1.0]` before returning them to JavaScript (as required by the Web Audio API).
 
 **Formula:** `sample_f32 = sample_i32 as f32 / (1 << (bps - 1)) as f32`
-(e.g., divide by `32768.0` for 16-bit audio).
+(e.g., divide by `8388608.0` for 24-bit audio).

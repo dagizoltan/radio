@@ -19,7 +19,7 @@ The crate configures the ALSA device using raw kernel `ioctl`s wrapped by `rusti
 
 The device is opened with `O_RDWR | O_NONBLOCK`.
 
-*   **Format:** `FORMAT_S16_LE`
+*   **Format:** `FORMAT_S24_LE`
 *   **Access Mode:** `ACCESS_RW_INTERLEAVED`
 *   **Sample Rate:** 44100 Hz
 *   **Channels:** 2
@@ -43,7 +43,7 @@ The capture loop uses Tokio's `AsyncFd` for zero-polling, kernel-driven wakeups.
 1.  The raw file descriptor is wrapped in `tokio::io::unix::AsyncFd`.
 2.  The `read_period` method awaits `async_fd.readable()`. This puts the Tokio task to sleep.
 3.  When the kernel signals the ALSA file descriptor is readable (a period of 4096 frames is ready), Tokio wakes the task.
-4.  The task calls `try_io` with the `IOCTL_READI_FRAMES` ioctl to read the period into an `&mut [i16]` buffer.
+4.  The task calls `try_io` with the `IOCTL_READI_FRAMES` ioctl to read the period into an `&mut [i32]` buffer.
 5.  If the read is successful, it returns the number of samples read. If it returns `EWOULDBLOCK`, the task loops back to await readability.
 
 ## Critical Constraints

@@ -4,9 +4,9 @@ This document traces the lifecycle of an audio sample through the Lossless Vinyl
 
 ## Audio Sample Lifecycle
 
-1.  **ADC (Analog-to-Digital Conversion):** The Behringer UMC404HD converts the analog signal to digital (44100 Hz, 16-bit, stereo).
+1.  **ADC (Analog-to-Digital Conversion):** The Behringer UMC404HD converts the analog signal to digital (44100 Hz, 24-bit, stereo).
 2.  **Kernel / ALSA:** The Linux kernel buffers the audio frames.
-3.  **Capture (Rust - Process 1 HQ Recorder):** The [Capture Crate](../radio-server/capture.md) reads the audio frames from the ALSA device file into an interleaved `&mut [i16]` buffer via raw kernel `ioctl`s.
+3.  **Capture (Rust - Process 1 HQ Recorder):** The [Capture Crate](../radio-server/capture.md) reads the audio frames from the ALSA device file into an interleaved `&mut [i32]` buffer via raw kernel `ioctl`s.
 4.  **Raw Encoder (Process 1 HQ Recorder):** A raw FLAC [Encoder](../radio-server/encoder.md) takes the interleaved samples and produces raw verbatim HQ FLAC frames. The Recorder task writes them directly to the local archive.
 5.  **Raw Channel Broadcast:** The raw FLAC frames are also broadcast over a `tokio::sync::broadcast` channel to be consumed by the conversion process.
 6.  **Normalization (Process 2 Converter):** The conversion process receives the raw buffer and passes it to the [Normalizer](../radio-server/normalizer.md), which applies LUFS gain riding and true-peak limiting in-place.

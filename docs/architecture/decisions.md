@@ -52,9 +52,9 @@ The R2 Uploader actively maintains a queue of uploaded segments and issues `DELE
 
 ## Why MP3 for the LQ stream?
 
-The Converter process explicitly encodes the lower-quality (LQ) fallback stream as a high-resolution, stereo MP3 (e.g., 192kbps).
+The Converter process explicitly encodes the lower-quality (LQ) fallback stream as a high-resolution, stereo MP3 (e.g., 320kbps).
 
-*   **Rationale:** To provide a viable low-bandwidth fallback without breaking the "clean Rust architecture" rule, we need an encoder that is available in pure Rust (or highly portable and easily vendored). MP3 offers excellent compatibility and significant bandwidth reduction while maintaining full stereo width (vs downsampling PCM). A lightweight pure-Rust WASM MP3 decoder (like `minimp3-rs`) can be bundled alongside the FLAC decoder, keeping the `AudioWorklet` chunk-streaming architecture perfectly identical for both formats.
+*   **Rationale:** To provide a viable lower-bandwidth fallback (compared to the heavy 24-bit lossless FLAC) without breaking the "clean Rust architecture" rule, we need an encoder that is available in pure Rust (or highly portable and easily vendored). MP3 offers excellent compatibility and significant bandwidth reduction while maintaining full stereo width (vs downsampling PCM). A lightweight pure-Rust WASM MP3 decoder (like `minimp3-rs`) can be bundled alongside the FLAC decoder, keeping the `AudioWorklet` chunk-streaming architecture perfectly identical for both formats.
 
 ## Why explicitly flush the AudioWorklet on quality switch?
 

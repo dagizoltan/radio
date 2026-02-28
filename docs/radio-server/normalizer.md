@@ -1,6 +1,6 @@
 # Normalizer Crate
 
-The `crates/normalizer` library provides a two-stage audio normalizer operating on interleaved `i16` samples in place.
+The `crates/normalizer` library provides a two-stage audio normalizer operating on interleaved `i32` samples (representing 24-bit audio) in place.
 
 ## Stage 1: LUFS Gain Rider
 
@@ -32,9 +32,9 @@ This stage only acts when a transient peak is too loud, compressing the peak tra
 
 The `Normalizer` struct exposes a `process` method:
 
-*   `process(&mut [i16]) -> f32`: Takes a mutable slice of interleaved `i16` samples. Applies both normalization stages in-place. Returns the currently applied smoothed gain in dB (used for the monitor UI).
+*   `process(&mut [i32]) -> f32`: Takes a mutable slice of interleaved `i32` samples. Applies both normalization stages in-place. Returns the currently applied smoothed gain in dB (used for the monitor UI).
 
-**Internal Processing:** The normalizer temporarily converts the `i16` samples to `f32` for all calculations and gain application, ensuring precision. After processing, it converts the `f32` samples back to `i16`, applying clamping (`-32768` to `32767`) to prevent integer overflow.
+**Internal Processing:** The normalizer temporarily converts the `i32` samples to `f32` for all calculations and gain application, ensuring precision. After processing, it converts the `f32` samples back to `i32`, applying clamping to the 24-bit range (`-8388608` to `8388607`) to prevent integer overflow or clipping beyond the 24-bit boundary.
 
 ## Critical Constraints
 

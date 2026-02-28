@@ -31,7 +31,7 @@ Handles direct hardware capture and local uncompressed archiving.
 4.  Enters an asynchronous loop, awaiting periods from the capture device.
 5.  **For each period (4096 frames):**
     *   Computes the peak absolute sample value for the left and right channels for the UI. Updates `vu_left` and `vu_right`.
-    *   Encodes the raw `&[i16]` buffer into raw verbatim HQ FLAC frames.
+    *   Encodes the raw `&[i32]` buffer into raw verbatim HQ 24-bit FLAC frames.
     *   Writes the frames directly to the local archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
     *   Broadcasts the raw frames via the raw `tokio::sync::broadcast` channel to the converter process.
     *   Emits VU levels to `sse_tx`.
@@ -43,12 +43,12 @@ Consumes the raw stream, normalizes it, and encodes it into multiple qualities (
 
 1.  Subscribes to the raw broadcast channel.
 2.  Initializes the `Normalizer`.
-3.  Initializes the audio encoders: one `FlacEncoder` for the normalized HQ stream, and one MP3 encoder (e.g., using a pure-Rust MP3 library set to 192kbps stereo) for the LQ stream.
-4.  Loops, receiving raw FLAC frames and extracting the interleaved `i16` buffer.
+3.  Initializes the audio encoders: one `FlacEncoder` for the normalized HQ stream (24-bit), and one MP3 encoder (e.g., using a pure-Rust MP3 library set to 320kbps stereo) for the LQ stream.
+4.  Loops, receiving raw FLAC frames and extracting the interleaved `i32` buffer.
 5.  Copies the raw buffer to a new mutable buffer and calls `normalizer.process(&mut buffer)`.
 6.  Encodes the normalized buffer simultaneously into the respective HQ (FLAC) and LQ (MP3) streams.
 7.  Emits the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
-8.  **Segment Assembly:** Accumulates the encoded frames for both qualities. When the target 10-second duration is reached (based on PCM sample count equivalent):
+8.  **Segment Assembly:** Accumulates the encoded frames for both qualities. When the target 10-second duration is reached (based on PCM sample count equivalent, `44100 * 2 channels * 4 bytes * 10s = 3,528,000` bytes):
     *   Assembles complete, standalone FLAC files in memory by prepending the respective stream headers.
     *   Broadcasts the completed HQ and LQ segment files (as `Bytes`) over dedicated segment channels to the Cloud Uploader.
 

@@ -68,7 +68,7 @@ The payload used for reading interleaved frames via `IOCTL_READI_FRAMES`.
 #[repr(C)]
 struct SndrPcmXferi {
     result: i64,      // Number of frames actually read
-    buf: *mut i16,    // Pointer to the user-space buffer
+    buf: *mut i32,    // Pointer to the user-space buffer (for 24-bit audio, typically packed into 32-bit words by ALSA)
     frames: u64,      // Number of frames requested
 }
 ```
@@ -76,10 +76,10 @@ struct SndrPcmXferi {
 ## Configuration Sequence
 
 1.  **Open:** Open the device file descriptor with `O_RDWR | O_NONBLOCK`. This is required so `AsyncFd` can manage readiness without blocking the thread.
-2.  **`IOCTL_HW_PARAMS`:** Construct the `SndrPcmHwParams` struct specifying `FORMAT_S16_LE` (16-bit little-endian), `ACCESS_RW_INTERLEAVED` (LRLRLR...), 44100 Hz, 2 channels, 4096 period size, and 4 periods per buffer. Execute the ioctl.
+2.  **`IOCTL_HW_PARAMS`:** Construct the `SndrPcmHwParams` struct specifying `FORMAT_S24_LE` (24-bit little-endian), `ACCESS_RW_INTERLEAVED` (LRLRLR...), 44100 Hz, 2 channels, 4096 period size, and 4 periods per buffer. Execute the ioctl.
 3.  **`IOCTL_PREPARE`:** Prepare the hardware for capture.
 4.  **`AsyncFd` Loop:**
     *   Await `readable()`.
-    *   Construct `SndrPcmXferi` pointing to a `&mut [i16]` buffer sized for 4096 frames (8192 samples).
+    *   Construct `SndrPcmXferi` pointing to a `&mut [i32]` buffer sized for 4096 frames (8192 samples).
     *   Execute `IOCTL_READI_FRAMES`.
     *   If `result > 0`, process audio. If `EWOULDBLOCK`, loop.
