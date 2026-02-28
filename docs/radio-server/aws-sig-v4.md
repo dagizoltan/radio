@@ -26,6 +26,8 @@ A distinct signing key is derived for each date and service.
 
 The HTTP request is normalized into a "Canonical Request" string.
 
+**Clock Skew Mitigation:** R2 rejects requests where the `x-amz-date` and `RequestDateTime` deviate from the server's time by more than 5 minutes. To mitigate host clock drift without relying exclusively on NTP, the S3 Uploader Task should periodically fetch the `Date` header from an R2 response (e.g., via a `HEAD` request or by interpreting the headers of a failed `PUT`) to calculate a "clock skew" offset relative to the local system clock. This calculated offset must be added to the current system time when generating the `x-amz-date` and `RequestDateTime` fields.
+
 ```text
 HTTPRequestMethod
 CanonicalURI

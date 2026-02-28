@@ -6,7 +6,7 @@ The `crates/server` library is the main binary that orchestrates the entire `rad
 
 All state is held in an `Arc<AppState>` and shared safely across tasks:
 
-*   `streaming: AtomicBool`: Toggled by the `/start` and `/stop` HTTP endpoints.
+*   `streaming: AtomicBool`: Toggled by the `/start` and `/stop` HTTP endpoints. When `false`, the Recorder Task must pause writing to the local archive and pause sending PCM data to the Converter Task, effectively silencing the broadcast and conserving disk/CPU resources without tearing down the ALSA handle.
 *   `vu_left, vu_right: AtomicI32`: Peak sample values continuously updated by the pipeline for the UI VU meters.
 *   `recording_path: Mutex<String>`: The full path to the current local archive file (e.g., `./recordings/recording-1234.flac`).
 *   `recording_bytes: AtomicU64`: The total number of bytes written to the current archive file.
@@ -49,8 +49,8 @@ Consumes the raw stream, normalizes it, and encodes it into multiple qualities (
 6.  Encodes the normalized buffer simultaneously into the respective HQ (FLAC) and LQ (Opus) streams.
 7.  Emits the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
 8.  **Segment Assembly:** Accumulates the encoded frames for both qualities.
-    *   *Optimization Strategy:* To prevent constant vector reallocations as frames accumulate, the accumulator `Vec<u8>` for the 10-second segment must be pre-allocated with `Vec::with_capacity()`. A 10-second 24-bit verbatim FLAC segment will reliably be ~`48000 * 3 bytes * 2 channels * 10s = 2,880,000` bytes, plus the header. Pre-allocating this exact size prevents the OS from thrashing memory reallocations during the real-time capture loop.
-    *   **Threshold:** 480,000 frames (10 × 48000 Hz). Track a `frame_counter: u64` incremented by `period_frames` (4096) per ALSA period. Pre-allocate accumulator: `Vec::with_capacity(2_880_100)` for HQ (480,000 frames × 3 bytes × 2 channels + header).
+    *   *Optimization Strategy:* To prevent constant vector reallocations as frames accumulate, the accumulator `Vec<u8>` for the 10-second segment must be pre-allocated with `Vec::with_capacity()`. A 10-second 24-bit verbatim FLAC segment contains the raw PCM payload (`48000 * 3 bytes * 2 channels * 10s = 2,880,000` bytes) plus the FLAC framing overhead. A 10s segment has ~117 FLAC frames, each contributing a frame header (~10-15 bytes) and a CRC-16 (2 bytes), adding around ~1,700 bytes. To ensure zero reallocations, the buffer must be padded slightly larger than just the PCM size.
+    *   **Threshold:** 480,000 frames (10 × 48000 Hz). Track a `frame_counter: u64` incremented by `period_frames` (4096) per ALSA period. Pre-allocate accumulator: `Vec::with_capacity(2_885_000)` for HQ (PCM + framing overhead padding).
     *   Assembles complete, standalone files in memory by prepending the respective stream headers to the filled accumulator.
     *   Sends completed HQ and LQ segment files to the Cloud Uploader via a bounded `tokio::sync::mpsc` channel with capacity **3**. If the channel is full (Uploader lagging), the Converter logs `WARN: uploader lagging, oldest segment dropped` and the channel's back-pressure causes the send to fail gracefully.
 
