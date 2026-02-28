@@ -76,7 +76,7 @@ struct SndrPcmXferi {
 ## Configuration Sequence
 
 1.  **Open:** Open the device file descriptor with `O_RDWR | O_NONBLOCK`. This is required so `AsyncFd` can manage readiness without blocking the thread.
-2.  **`IOCTL_HW_PARAMS`:** Construct the `SndrPcmHwParams` struct specifying `FORMAT_S24_LE` (24-bit little-endian), `ACCESS_RW_INTERLEAVED` (LRLRLR...), 44100 Hz, 2 channels, 4096 period size, and 4 periods per buffer. Execute the ioctl.
+2.  **`IOCTL_HW_PARAMS`:** Construct the `SndrPcmHwParams` struct specifying `FORMAT_S24_LE` (24-bit little-endian), `ACCESS_RW_INTERLEAVED` (LRLRLR...), 48000 Hz, 2 channels, 4096 period size, and 4 periods per buffer. Execute the ioctl.
 3.  **`IOCTL_PREPARE`:** Prepare the hardware for capture.
 4.  **`AsyncFd` Loop:**
     *   Await `readable()`.

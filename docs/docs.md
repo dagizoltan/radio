@@ -126,6 +126,9 @@ radio-stream/
 *   [FLAC Format Subset](reference/flac-format.md): Detail of the specific verbatim FLAC encoding used.
 *   [ALSA ioctls](reference/alsa-ioctls.md): Raw hex constants and `#[repr(C)]` structs for kernel interaction.
 *   [API Routes](reference/api-routes.md): Exhaustive list of all HTTP endpoints across both servers.
+*   [Manifest Schema](reference/manifest-schema.md): Field-by-field specification of `manifest.json`.
+*   [Archive Integrity](reference/archive-integrity.md): Verification procedures for local FLAC recordings.
+*   [Observability Baseline](reference/observability-baseline.md): Healthy metric ranges and alarm thresholds.
 
 ## Critical Constraints
 
@@ -142,3 +145,7 @@ The system design enforces several strict rules outlined below. Violating these 
 9.  **ALSA device discovery is dynamic**: The [Capture Crate](radio-server/capture.md) finds the UMC404HD card number at runtime by parsing `/proc/asound/cards`.
 10. **Tokio AsyncFd for capture, not threads**: The capture loop must use `AsyncFd` for kernel-driven wakeups instead of a blocking polling loop, as detailed in the [Capture Crate](radio-server/capture.md) doc.
 11. **No Proxying**: The public `radio-client` must only poll the `manifest.json` and serve static assets. The browser Web Component must fetch audio segments *directly* from the S3/R2 bucket. The Deno server must **never proxy audio segments** or the `/events` SSE stream to the public internet to conserve bandwidth and connection limits.
+12. **LQ stream is Opus-in-Ogg**: The LQ fallback stream uses the Opus codec at 128 kbps wrapped in an Ogg container. File extension is `.opus`. A dedicated `OpusDecoder` WASM module handles LQ decoding.
+13. **No manifest proxy**: The browser fetches `manifest.json` and all segments directly from R2/MinIO using the `data-r2-url` SSR-injected attribute. The Deno server never proxies media traffic.
+14. **8-digit segment indices**: All segment keys use 8-digit zero-padded indices (`segment-{:08}`). Index wraps at 100,000,000. Client handles rollover via sign-flip detection in jump-ahead logic.
+15. **Single active tab**: The Web Locks API enforces one active decoder pipeline per user. A second tab shows a "Stream is already playing in another tab" message.

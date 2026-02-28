@@ -9,7 +9,7 @@ The file registers the processor using `registerProcessor("radio-processor", cla
 ## State and Parameters
 
 The class maintains internal state using a pre-allocated **Ring Buffer** to achieve zero-allocations and avoid JavaScript Garbage Collection (GC) pauses:
-*   `ringBuffer`: A single, large `Float32Array` pre-allocated to hold several seconds of audio (e.g., 5 seconds = `44100 * 2 channels * 5` elements).
+*   `ringBuffer`: A single, large `Float32Array` pre-allocated to hold several seconds of audio (`48000 × 2 channels × 20 seconds = 1,920,000 floats` (~7.3 MB). Pre-allocate with `new Float32Array(1_920_000)`.
 *   `writePointer`: An integer tracking where the next incoming chunk should be written.
 *   `readPointer`: An integer tracking where the next playback frame should be read.
 *   `samplesAvailable`: An integer tracking how much unread data exists in the ring buffer.
@@ -23,6 +23,7 @@ The main thread sends `Float32Array` chunks (interleaved stereo PCM from the WAS
 The worklet implements `this.port.onmessage = (event) => { ... }` to receive these messages.
 *   If the message contains a `Float32Array`, it copies the chunk into the `ringBuffer` starting at the `writePointer`, wrapping around to index 0 if it hits the end of the array. It increments `samplesAvailable`.
 *   If the message is a specific string command (e.g., `"FLUSH"`), it immediately zeroes out the `samplesAvailable` and aligns the read/write pointers. This is critical for preventing audio artifacts when the user switches stream qualities mid-playback.
+*   If the message is `{ type: "QUERY_DEPTH" }`, respond immediately via `this.port.postMessage({ type: "DEPTH_RESPONSE", samplesAvailable: this.samplesAvailable })`. This is used by the player's visibility change handler to determine whether the buffer contains stale audio after returning from a background tab.
 
 ## Output Processing
 

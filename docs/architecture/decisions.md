@@ -54,18 +54,21 @@ The R2 Uploader actively maintains a queue of uploaded segments and issues `DELE
 
 ## Why a Custom Chunk-Streaming Architecture (Why not HLS/Icecast)?
 
-The system builds its own segmented streaming protocol (a JSON manifest pointing to standalone 10-second FLAC/MP3 files) rather than using industry standards like Icecast or HTTP Live Streaming (HLS).
+The system builds its own segmented streaming protocol (a JSON manifest pointing to standalone 10-second FLAC/Opus files) rather than using industry standards like Icecast or HTTP Live Streaming (HLS).
 
 *   **Rationale:**
     *   *Vs. Icecast:* Icecast requires a long-lived, dedicated TCP connection from every listener to a central server. This scales poorly and is vulnerable to transient network drops. Our architecture pushes static chunks to an edge CDN (Cloudflare R2), making delivery infinitely scalable, cacheable, and resilient to client network hiccups.
-    *   *Vs. HLS/MPEG-DASH:* Modern platforms chunk media into segments (like we do) and use an `.m3u8` playlist. Browsers play these chunks natively using the Media Source Extensions (MSE) API. **However, browsers generally do not support FLAC via MSE.** If we used standard HLS, we would be forced to use lossy codecs (AAC/MP3) for everything, sacrificing our primary 24-bit lossless archival and broadcast goal. By building a custom chunk-fetcher, a WASM decoder, and an `AudioWorklet`, we completely bypass the browser's native codec limitations.
+    *   *Vs. HLS/MPEG-DASH:* Modern platforms chunk media into segments (like we do) and use an `.m3u8` playlist. Browsers play these chunks natively using the Media Source Extensions (MSE) API. **However, browsers generally do not support FLAC via MSE.** If we used standard HLS, we would be forced to use lossy codecs (AAC/Opus) for everything, sacrificing our primary 24-bit lossless archival and broadcast goal. By building a custom chunk-fetcher, a WASM decoder, and an `AudioWorklet`, we completely bypass the browser's native codec limitations. The Deno server serves only the initial HTML shell and static assets. Both `manifest.json` and all audio segments are fetched directly from the R2/MinIO bucket by the browser, completely bypassing the Deno proxy for all media-related traffic.
     *   *Chunk Size vs. Latency:* While 10-second chunks inherently introduce a high latency of 10-20 seconds (the time to encode, upload, and for the client to fetch), the primary goal of this system is **production-grade, high-quality audio stability**, not ultra-low latency. Using 10-second segments significantly reduces the volume of HTTP PUT/GET requests, lowering overall system stress and making client-side playback alignment via WebAssembly far more reliable with fewer gapless playback transitions to compute.
 
-## Why MP3 for the LQ stream?
+## Why Opus for the LQ stream?
 
-The Converter process explicitly encodes the lower-quality (LQ) fallback stream as a high-resolution, stereo MP3 (e.g., 320kbps).
+The Converter process encodes the lower-quality (LQ) fallback stream as Opus at 128 kbps stereo, wrapped in an Ogg container, using the pure-Rust `audiopus` crate for encoding and the `ogg` crate for container framing.
 
-*   **Rationale:** To provide a viable lower-bandwidth fallback (compared to the heavy 24-bit lossless FLAC) without breaking the "clean Rust architecture" rule, we need an encoder that is available in pure Rust (or highly portable and easily vendored). MP3 offers excellent compatibility and significant bandwidth reduction while maintaining full stereo width (vs downsampling PCM). A lightweight pure-Rust WASM MP3 decoder (like `minimp3-rs`) can be bundled alongside the FLAC decoder, keeping the `AudioWorklet` chunk-streaming architecture perfectly identical for both formats.
+- **Rationale:** Opus is perceptually transparent at 128 kbps — indistinguishable from lossless for the vast majority of listeners and material. It achieves better compression than 16-bit FLAC at equivalent bitrates and far better than MP3, making it the optimal choice for a mobile-first fallback stream. Crucially, both `audiopus` (safe bindings to libopus, well-maintained) and a pure-Rust WASM Opus decoder (`opus-rs`) are available, keeping the build clean. The trade-off versus a second FLAC stream is the addition of a second WASM decoder module in the browser bundle (~60–80 KB gzipped), which is acceptable given the perceptual quality advantage.
+- **No MP3:** There is no production-quality pure-Rust MP3 encoder available. Using `libmp3lame` via FFI would introduce a C dependency and cross-compilation complexity inconsistent with the project's architecture goals.
+- **Ogg framing:** Ogg provides a self-synchronising packet structure ideal for streaming. An Ogg Opus stream can be resumed mid-stream by the decoder after a gap, which matters for the segment-based delivery model.
+- **Constraint:** LQ segment file extension is `.opus`. Quality is differentiated by path prefix (`live/hq/` vs `live/lq/`). The HQ FLAC decoder and LQ Opus decoder are separate WASM modules, each following the identical `push(bytes) → f32[]` API so the player fetch loop switches decoders by swapping a single reference.
 
 ## Why explicitly flush the AudioWorklet on quality switch?
 
@@ -90,7 +93,7 @@ If a mobile listener loses their internet connection (e.g., entering a tunnel) f
 The S3 Uploader explicitly sets `Cache-Control` headers when pushing to Cloudflare R2 to ensure the CDN scales infinitely without hitting the origin bucket.
 
 *   **Rationale:** If a thousand listeners request the same 10-second chunk simultaneously, the edge CDN must serve it to prevent high egress costs and bucket throttling.
-*   **Constraint:** FLAC/MP3 segments must be uploaded with `Cache-Control: public, max-age=31536000, immutable` (they never change once uploaded). The `manifest.json` must be uploaded with `Cache-Control: no-store, max-age=0` (it must always be fetched fresh to find the newest chunks).
+*   **Constraint:** FLAC/Opus segments must be uploaded with `Cache-Control: public, max-age=31536000, immutable` (they never change once uploaded). The `manifest.json` must be uploaded with `Cache-Control: no-store, max-age=0` (it must always be fetched fresh to find the newest chunks) via the S3 `PUT` request's object metadata, not by the Deno proxy (which no longer handles the manifest at all).
 
 ## Clock Drift and Buffer Management
 
@@ -123,5 +126,21 @@ The architecture relies heavily on separate, independent processes working in ta
 
 The client must automatically handle degraded network conditions without manual user intervention.
 
-*   **Rationale:** While the HQ FLAC stream is the priority, a mobile listener entering an area with poor signal will experience constant buffering. Expecting the user to manually click an "LQ MP3" button is a poor user experience.
+*   **Rationale:** While the HQ FLAC stream is the priority, a mobile listener entering an area with poor signal will experience constant buffering. Expecting the user to manually click an "LQ Opus" button is a poor user experience.
 *   **Implementation Strategy:** The Web Component's custom fetch loop must measure the download time of each 10-second chunk. If the fetch time consistently exceeds a safe threshold (e.g., it takes 8 seconds to download 10 seconds of audio), the client should automatically pivot to fetching from the LQ manifest. If network conditions improve and stabilize for several minutes, it can attempt an opportunistic pivot back to the HQ stream.
+## Why 8-digit segment indices with wrap-at-100M?
+
+- **Rationale:** The original 6-digit format (`{:06}`) supports 1,000,000 segments = ~115 days of continuous broadcast before index exhaustion. For a system intended to run continuously year-round, this is an operational boundary that would require manual intervention. Switching to 8-digit zero-padding (`{:08}`) extends the natural limit to ~31.7 years — beyond any realistic operational horizon — without changing the key format structure or S3 path semantics.
+- **Wrap behaviour:** The index wraps at 100,000,000 using modular arithmetic. The client detects rollover via a sign-flip heuristic in the jump-ahead logic (see Data Flow doc). A true rollover after 31.7 years is operationally identical to a server restart.
+- **Constraint:** All segment key formats use 8-digit zero-padding everywhere: server `PUT` requests, manifest `latest` field values, and client URL construction.
+
+## Why Web Locks API for multi-tab prevention?
+
+- **Rationale:** Opening the stream in two browser tabs simultaneously doubles R2 egress from a single user, doubles WASM decoder CPU load, and can produce audio bleed between tabs on shared audio devices. The Web Locks API (`navigator.locks.request`) provides a browser-native, cross-tab mutex. If the lock cannot be acquired (another tab holds it), the player shows a "Stream is already playing in another tab" message and disables the play button rather than starting a second decoder pipeline.
+- **Fallback:** On browsers without Web Locks support (pre-Chromium Edge, some older Safari versions), the lock check is skipped and multi-tab is permitted silently. The player logs a console warning.
+- **Constraint:** The lock name is `"radio-player-singleton"` and is held for the lifetime of the playback session. It is released automatically by the browser when the tab is closed or navigated away.
+
+## Why explicit AudioContext resume on tab visibility change?
+
+- **Rationale:** Some browsers (particularly mobile Safari and Chrome on Android) automatically suspend the `AudioContext` when a tab is hidden or the screen is locked. The fetch loop runs in a dedicated Web Worker and is unaffected by tab visibility, so audio chunks continue arriving and filling the ring buffer. When the user returns to the tab, the ring buffer may be full of stale audio. Without explicit context management, playback resumes from the buffered (stale) position rather than the live edge.
+- **Implementation:** The player registers a `document.addEventListener("visibilitychange", ...)` handler. On `"visible"`, it calls `audioCtx.resume()` and, if the ring buffer contains more than 1.5 segments worth of data, sends a `"FLUSH"` to the worklet and jumps the fetch index to `latest - 1` to re-anchor to the live edge. This ensures returning from a background tab feels instantaneous and live rather than delayed by buffered stale audio.
