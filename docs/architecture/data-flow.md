@@ -47,8 +47,8 @@ The `radio-server` audio pipeline uses two dedicated `tokio::sync::mpsc` channel
 
 The stream is chunked into discrete segments to enable low-latency HTTP delivery without WebSockets or specialized streaming protocols.
 
-1.  **Accumulation:** The R2 Uploader task accumulates FLAC frames until 480,000 frames of PCM audio have been accumulated (10 seconds × 48000 Hz = 480,000 frames). Frame count, not byte count, is used as the threshold to remain independent of sample packing format (S24_LE, S32_LE, etc.).
-2.  **File Creation:** The segment is assembled into a complete, standalone FLAC file by prepending the cached FLAC stream header (`fLaC` marker + `STREAMINFO` block).
+1.  **Accumulation:** The Converter Task accumulates encoded frames until 480,000 frames of PCM audio have been processed (10 seconds × 48000 Hz = 480,000 frames). Frame count, not byte count, is used as the threshold to remain independent of sample packing format (S24_LE, S32_LE, etc.). The Uploader Task receives complete pre-assembled segments — it does not accumulate frames itself.
+2.  **File Creation:** The Converter Task assembles each quality's accumulated data into a complete, standalone file: for HQ, by prepending the cached FLAC stream header (`fLaC` marker + `STREAMINFO` block) to the accumulated verbatim frames; for LQ, by prepending the Ogg Opus header pages to the accumulated Opus packets. The Uploader receives these as fully-formed, ready-to-upload byte payloads.
 3.  **Upload:** Segments are pushed to S3 with quality-namespaced, 8-digit zero-padded keys: `live/hq/segment-00000042.flac` for HQ FLAC and `live/lq/segment-00000042.opus` for LQ Opus.
 4.  **Manifest Update:** `live/manifest.json` is overwritten with the new latest segment index.
 5.  **Rolling Window:** The uploader maintains a queue of uploaded segment keys. If the window exceeds 3 segments, the oldest segment is explicitly deleted from S3 via a `DELETE` request.

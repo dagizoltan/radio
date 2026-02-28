@@ -45,7 +45,11 @@ Docker Compose will build the Rust server and Deno client images, start MinIO, i
 Open a browser and navigate to the MinIO Console at `http://localhost:9001`.
 
 *   Log in using the credentials from `.env` (`minioadmin` / `minioadmin123`).
-*   Verify that the `radio-stream` bucket exists and contains a `live/manifest.json` and segment FLAC files. (Note: The browser fetches the manifest directly from `http://localhost:9000/radio-stream/live/manifest.json`, not from `http://localhost:3000`).
+*   Verify that the `radio-stream` bucket exists. After approximately 10 seconds of audio capture, a `live/manifest.json` will appear, and segment files will populate under the `live/hq/` and `live/lq/` prefixes. If no files appear after 30 seconds, check the `radio` container logs:
+    ```bash
+    docker compose logs radio
+    ```
+    Note: The browser fetches the manifest directly from `http://localhost:9000/radio-stream/live/manifest.json`, not from `http://localhost:3000`.
 
 ### 5. Open the Operator Monitor
 

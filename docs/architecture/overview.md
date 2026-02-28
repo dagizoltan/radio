@@ -70,7 +70,7 @@ The Lossless Vinyl Radio Streaming System is a two-part architecture designed to
 The system is strictly divided into two independent codebases:
 
 1. **`radio-server`:** A pure Rust codebase running locally on the ThinkPad. It is structurally split into three main processes: one for capturing/archiving HQ audio, one for converting the stream to multi-quality (LQ) chunks, and one for uploading chunks to the cloud. It also serves a local operator monitor UI.
-2. **`radio-client`:** A Deno + Hono application deployed to Deno Deploy. It serves the public listener interface, fetches the manifest from R2, and provides the Web Component and WASM decoder for browser playback.
+2. **`radio-client`:** A Deno + Hono application deployed to Deno Deploy. It serves the public listener interface, fetches the manifest from R2 **once per page request at SSR time** to populate initial state attributes, and provides the Web Component and WASM decoder for browser playback. All ongoing manifest polling and segment fetching is performed browser-side directly against R2.
 
 ## Docker Topology
 
