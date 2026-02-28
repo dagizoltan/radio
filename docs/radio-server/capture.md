@@ -21,7 +21,7 @@ The device is opened with `O_RDWR | O_NONBLOCK`.
 
 *   **Format:** `FORMAT_S24_LE` (or `FORMAT_S32_LE` depending on hardware `hw_params`)
 *   **Access Mode:** `ACCESS_RW_INTERLEAVED`
-*   **Sample Rate:** 44100 Hz
+*   **Sample Rate:** 48000 Hz
 *   **Channels:** 2
 *   **Period Size:** 4096 frames
 *   **Buffer Size:** 4 periods

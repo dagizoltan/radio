@@ -8,6 +8,25 @@ Deploying the system for production involves reconfiguring the `radio-server` to
 2.  A Deno Deploy account.
 3.  **Strict NTP Synchronization:** The ThinkPad hardware clock must be perfectly synchronized to UTC. Install and run an NTP daemon (like `chrony` or `systemd-timesyncd`). This is critical because the rolling window logic, segment accumulation timing, and R2 metadata timestamps rely on a monotonically stable, non-drifting system clock to prevent the manifest edge from going out-of-sync with the client fetch requests over long uptimes.
 
+### NTP Synchronisation (Required)
+
+AWS Signature V4 request signing embeds a timestamp. R2 rejects any request whose timestamp deviates from server time by more than **5 minutes**, returning a silent `403 Forbidden` with no retry hint. Since these failures can be mistaken for permission or credential errors, the ThinkPad system clock must be kept tightly synchronised.
+
+**Verify sync is active:**
+```bash
+# For systemd-timesyncd (default on Ubuntu):
+timedatectl show-timesync --all
+# Healthy output: NTPSynchronized=yes, SystemNTPServers populated
+
+# For chrony:
+chronyc tracking
+# Healthy output: System time offset < 0.01 seconds, RMS offset < 0.1 seconds
+```
+
+**Acceptable offset threshold:** < 1 second at all times. If `timedatectl` shows `NTPSynchronized=no` or chrony shows offset > 10 seconds, investigate NTP connectivity before deploying. Configure the ThinkPad to use a nearby NTP pool (`pool.ntp.org` or a regional equivalent) in `/etc/systemd/timesyncd.conf` or `/etc/chrony.conf`.
+
+**Alarm:** If the S3 uploader begins receiving `403` responses after a period of success, check NTP sync status before investigating credentials.
+
 ## Step 1: Cloudflare R2 Setup
 
 1.  Log in to the Cloudflare dashboard.
@@ -57,9 +76,10 @@ Once deployed, users can visit the Deno Deploy URL to listen to the live stream.
 
 The ThinkPad has a real-world upload bandwidth of approximately **10.68 Mbps**.
 
-*   **Segment Size:** The target size is equivalent to 10 seconds of raw PCM audio (approx. 1,764,000 bytes or ~1.76 MB).
-*   **Required Upload Speed:** The server must upload 1.76 MB every 10 seconds, which translates to a required continuous upload speed of approximately **1.41 Mbps** (`(1.76 * 8) / 10`).
-*   **Headroom:** The 10.68 Mbps connection provides massive headroom, ensuring segments upload rapidly and the stream remains stable even with network fluctuations.
+- **HQ Segment Size:** 10s × 48000 Hz × 3 bytes × 2 channels = **2,880,000 bytes (~2.88 MB)**
+- **LQ Segment Size:** Opus at 128 kbps × 10s = **160,000 bytes (~160 KB)** — approximately 18× smaller than HQ.
+- **Required Upload Speed (both streams):** `((2.88 + 0.16) × 8) / 10 ≈ 2.43 Mbps` continuous.
+- **Headroom:** The 10.68 Mbps connection provides comfortable headroom.
 
 ### Storage Estimation
 
@@ -67,3 +87,35 @@ The system maintains a rolling window of exactly 3 segments on R2 at any given t
 
 *   **Steady-State Size:** 3 segments * ~1.5 MB (FLAC compressed) + 1 manifest file ≈ **4.5 MB total storage**.
 *   This predictable, bounded footprint ensures costs on Cloudflare R2 remain minimal.
+## Secret Management
+
+The `.env.prod` file contains `R2_ACCESS_KEY` and `R2_SECRET_KEY` in plaintext. These credentials grant write access to the R2 bucket. Observe the following:
+
+- `.env.prod` **must** be listed in `.gitignore`. Verify with `git check-ignore -v .env.prod` before committing.
+- On the ThinkPad, set file permissions to `600` (owner read-only): `chmod 600 radio-server/.env.prod`.
+- Preferred production approach: store credentials in a root-owned `EnvironmentFile` (e.g., `/etc/radio-server/secrets.env`, mode `600`) and reference it from the systemd unit:
+  ```ini
+  [Service]
+  EnvironmentFile=/etc/radio-server/secrets.env
+  ```
+  This keeps secrets outside the repository directory entirely.
+- Rotate the R2 API token every 90 days. Cloudflare R2 API tokens can be revoked and reissued without changing the bucket; only the `R2_ACCESS_KEY` and `R2_SECRET_KEY` values in the environment need updating.
+- Never log the secret key. The AWS Sig V4 implementation must not include `R2_SECRET_KEY` in any `tracing` span or log output, even at `TRACE` level.
+
+## Graceful Shutdown Procedure
+
+Always use the timeout-controlled stop command to allow the server to complete any in-flight segment upload and flush the current archive staging file:
+
+```bash
+docker compose stop --timeout 30
+```
+
+**What happens during shutdown:**
+1. Docker sends `SIGTERM` to the `radio` container.
+2. The Rust binary's shutdown handler catches the signal.
+3. The Recorder Task flushes and closes the current staging FLAC file, then moves it to `./recordings/`.
+4. The Converter Task completes the current in-progress segment (or discards a partial one, logging its index).
+5. The Cloud Uploader Task completes the in-flight S3 `PUT` (with up to 3 retries), then writes a final `manifest.json` with `"live": false`.
+6. The binary exits cleanly.
+
+**If the server is killed with SIGKILL or crashes:** The staging file in `/tmp/` is abandoned with a partial final frame. The FLAC file is still readable by standard players (the `total_samples` field is `0` / streaming-unknown, which is valid FLAC). The archive rotation script should run `flac --test` on new files before moving them to cold storage. See [Archive Integrity Verification](../reference/archive-integrity.md).

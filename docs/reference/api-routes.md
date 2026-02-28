@@ -22,5 +22,5 @@ Served via Deno Deploy (or `localhost:3000` via Compose). Acts as the SSR fronte
 | Method | Path | Description | Response Type | Caching |
 | :--- | :--- | :--- | :--- | :--- |
 | `GET` | `/` | SSR Hono route. Fetches the manifest from R2 and renders the full HTML shell containing the `<radio-player>`. | `text/html` | None |
-| `GET` | `/manifest.json` | Proxies the `live/manifest.json` from the R2 bucket. The manifest now includes `qualities: ["hq", "lq"]`. | `application/json` | `no-cache, no-store, must-revalidate` (Critical for live edge discovery) |
-| `GET` | `/static/:file` | Serves JS, CSS, and WASM assets from the local `static/` directory. | varies (`text/css`, `application/javascript`, `application/wasm`) | Standard static asset caching |
+| `GET` | `/static/:file` | Serves JS, CSS, and WASM assets from the local `static/` directory (including `opus_decoder.js` and `opus_decoder_bg.wasm`). | varies (`text/css`, `application/javascript`, `application/wasm`) | Standard static asset caching |
+> The manifest is fetched directly from `R2_PUBLIC_URL/live/manifest.json` by the browser. No Deno proxy route exists for it.

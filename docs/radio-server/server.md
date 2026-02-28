@@ -33,7 +33,7 @@ Handles direct hardware capture and local uncompressed archiving.
     *   Computes the peak absolute sample value for the left and right channels for the UI. Updates `vu_left` and `vu_right`.
     *   Encodes the raw `&[i32]` buffer into raw verbatim HQ 24-bit FLAC frames.
     *   Writes the frames directly to the staging archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
-    *   Broadcasts the raw frames via the raw `tokio::sync::broadcast` channel to the converter process.
+    *   Sends the raw frames via a bounded `tokio::sync::mpsc` channel (capacity 16) to the converter process.
     *   Emits VU levels to `sse_tx`.
 6.  **Archiving:** Periodically (e.g., every 60 minutes) or on graceful shutdown, it flushes the current staging file, closes the handle, and asynchronously moves it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue.
 
@@ -41,30 +41,36 @@ Handles direct hardware capture and local uncompressed archiving.
 
 Consumes the raw stream, normalizes it, and encodes it into multiple qualities (HQ and LQ).
 
-1.  Subscribes to the raw broadcast channel.
+1.  Receives from the bounded `mpsc` channel. The `broadcast` channel is retained only for control/status messages (SSE events, shutdown signals).
 2.  Initializes the `Normalizer`.
-3.  Initializes the audio encoders: one `FlacEncoder` for the normalized HQ stream (24-bit), and one MP3 encoder (e.g., using a pure-Rust MP3 library set to 320kbps stereo) for the LQ stream.
+3.  Initializes the audio encoders: one `FlacEncoder` for the normalized HQ stream (24-bit), and One Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`) with an `ogg::PacketWriter` for container framing. Before encoding, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets; the Ogg writer accumulates them into pages. Each 10-second segment is assembled as a complete, self-contained Ogg Opus stream (includes the two header pages prepended).
 4.  Loops, receiving raw FLAC frames and extracting the interleaved `i32` buffer.
 5.  Copies the raw buffer to a new mutable buffer and calls `normalizer.process(&mut buffer)`.
-6.  Encodes the normalized buffer simultaneously into the respective HQ (FLAC) and LQ (MP3) streams.
+6.  Encodes the normalized buffer simultaneously into the respective HQ (FLAC) and LQ (Opus) streams.
 7.  Emits the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
 8.  **Segment Assembly:** Accumulates the encoded frames for both qualities.
-    *   *Optimization Strategy:* To prevent constant vector reallocations as frames accumulate, the accumulator `Vec<u8>` for the 10-second segment must be pre-allocated with `Vec::with_capacity()`. A 10-second 24-bit verbatim FLAC segment will reliably be ~`44100 * 3 bytes * 2 channels * 10s = 2,646,000` bytes, plus the header. Pre-allocating this exact size prevents the OS from thrashing memory reallocations during the real-time capture loop.
-    *   When the target 10-second duration is reached (based on PCM sample count equivalent, `44100 * 2 channels * 4 bytes * 10s = 3,528,000` bytes in the raw `i32` buffer):
+    *   *Optimization Strategy:* To prevent constant vector reallocations as frames accumulate, the accumulator `Vec<u8>` for the 10-second segment must be pre-allocated with `Vec::with_capacity()`. A 10-second 24-bit verbatim FLAC segment will reliably be ~`48000 * 3 bytes * 2 channels * 10s = 2,880,000` bytes, plus the header. Pre-allocating this exact size prevents the OS from thrashing memory reallocations during the real-time capture loop.
+    *   **Threshold:** 480,000 frames (10 × 48000 Hz). Track a `frame_counter: u64` incremented by `period_frames` (4096) per ALSA period. Pre-allocate accumulator: `Vec::with_capacity(2_880_100)` for HQ (480,000 frames × 3 bytes × 2 channels + header).
     *   Assembles complete, standalone files in memory by prepending the respective stream headers to the filled accumulator.
-    *   Broadcasts the completed HQ and LQ segment files (as `Bytes`) over dedicated segment channels to the Cloud Uploader.
+    *   Sends completed HQ and LQ segment files to the Cloud Uploader via a bounded `tokio::sync::mpsc` channel with capacity **3**. If the channel is full (Uploader lagging), the Converter logs `WARN: uploader lagging, oldest segment dropped` and the channel's back-pressure causes the send to fail gracefully.
 
 ### Process 3: Cloud Uploader Task
 
 Receives completed segments and handles S3 uploads and manifest management.
 
 1.  **Startup Cleanup:** Before processing any new segments, performs a `LIST` and `DELETE` operation on the bucket prefixes (`live/hq/` and `live/lq/`) to remove any orphaned segments from a previous crashed session.
+    *   **Race Condition Mitigation:** Before issuing any `DELETE` requests during the startup sweep, write `manifest.json` with `"live": false`. This ensures any active listeners enter their backoff/retry state before their buffered segments are deleted. After the sweep completes and the first new segment is uploaded, the manifest is updated to `"live": true`. The recommended implementation sequence:
+        1. Write `manifest.json`: `{"live": false, "latest": 0, "segment_s": 10}`.
+        2. `LIST` `live/hq/` and `live/lq/`.
+        3. `DELETE` all found segment keys.
+        4. Resume from the highest found index (or 0 if none found).
+        5. After first successful upload: write `manifest.json` with `"live": true`.
 2.  Subscribes to the completed HQ and LQ segment broadcast channels.
 3.  Loops, receiving assembled segment files.
 4.  **Upload:**
     *   Uploads the segments to S3 using raw HTTP with [AWS Signature V4](aws-sig-v4.md).
     *   **Resilience:** Uses an exponential backoff retry loop (e.g., 3-5 retries) for the HTTP PUT requests to handle transient network drops.
-    *   Key format uses quality folders: e.g., `live/hq/segment-{:06}.flac` and `live/lq/segment-{:06}.mp3`.
+    *   Key format uses quality folders: e.g., `live/hq/segment-{:08}.flac` and `live/lq/segment-{:08}.opus`.
     *   Writes `live/manifest.json` containing metadata for both streams: `{"live": true, "latest": index, "segment_s": 10, "updated_at": timestamp, "qualities": ["hq", "lq"]}`.
     *   **Crucial Caching Instruction:** The `PUT` request for `manifest.json` **must** include the `Cache-Control: no-cache, no-store, must-revalidate` metadata explicitly. This prevents aggressive edge caching by Cloudflare R2 (or an upstream CDN), ensuring the browser receives `304 Not Modified` *only* via the backend ETag mechanism, preventing the stream from "ghosting" or appearing offline while still actively uploading.
 5.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 3 segments per quality, it issues `DELETE` requests for the oldest objects.
@@ -89,3 +95,33 @@ Serves the local monitor UI on `127.0.0.1:8080` using `axum`.
 **CRITICAL CONSTRAINT:** Rolling window, not TTL. R2 has no native TTL. The uploader maintains a VecDeque of uploaded keys and deletes the oldest immediately when the window exceeds 3 segments. At any moment R2 holds exactly 3 segments and one manifest.
 
 **CRITICAL CONSTRAINT:** Segments are complete FLAC files. Every segment uploaded to R2 must be playable as a standalone FLAC file.
+### Graceful Shutdown Contract
+
+The main function must register both `SIGTERM` and `SIGINT` handlers using `tokio::signal`:
+
+```rust
+let shutdown = async {
+    tokio::select! {
+        _ = tokio::signal::unix::signal(SignalKind::terminate())
+              .expect("SIGTERM handler").recv() => {},
+        _ = tokio::signal::ctrl_c() => {},
+    }
+};
+```
+
+When the shutdown signal fires, the cancellation token is cancelled. Each task must respect the token and complete its shutdown sequence:
+
+**Recorder Task shutdown:**
+1. Stop reading new periods from ALSA.
+2. Flush and close the current staging FLAC file (write any buffered bytes, fsync).
+3. Move the staging file to `./recordings/` via `tokio::fs::rename`.
+4. Log the final archive file path and size.
+
+**Converter Task shutdown:** Drop the in-progress partial segment (log its incomplete frame count). Do not broadcast a partial segment to the Uploader.
+
+**Cloud Uploader Task shutdown:**
+1. Complete any in-flight `PUT` request (do not cancel mid-upload — would create a partial S3 object).
+2. Write a final `manifest.json` with `"live": false` and `"updated_at": <now>`.
+3. Exit.
+
+**Timeout:** If any task has not exited within 25 seconds of the signal, `tokio::select!` in `main` forcefully aborts it and exits with code 1. This matches the 30-second Docker stop timeout with a 5-second buffer.

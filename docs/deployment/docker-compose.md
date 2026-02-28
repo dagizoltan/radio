@@ -9,7 +9,7 @@ The topology consists of four distinct services:
 1.  **`minio`**: The local S3-compatible object storage server.
 2.  **`minio-setup`**: A temporary container to configure the `minio` instance.
 3.  **`radio`**: The Rust server application capturing and uploading audio.
-4.  **`client`**: The Deno frontend serving the web listener interface.
+4.  **`client`**: The Deno frontend serving the web listener interface. All audio segment and manifest fetches are performed browser-side directly against `http://localhost:9000/${R2_BUCKET}`. The Deno client serves only the HTML shell and static assets.
 
 ## Service Details
 
@@ -35,6 +35,29 @@ The topology consists of four distinct services:
     *   Sets an alias for the local `minio` service.
     *   Creates the target bucket (e.g., `radio-stream`) using `--ignore-existing`.
     *   Sets the anonymous download policy to allow public reads directly from the client browser.
+
+
+After setting the anonymous download policy, configure a CORS policy to allow direct browser `GET` requests:
+
+```bash
+mc anonymous set-json /tmp/cors.json minio/radio-stream
+```
+
+Where `/tmp/cors.json` contains:
+```json
+{
+  "CORSRules": [{
+    "AllowedOrigins": ["http://localhost:3000"],
+    "AllowedMethods": ["GET"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }]
+}
+```
+
+`ExposeHeaders: ["ETag"]` is required so the browser's `If-None-Match` manifest polling optimisation (which now hits MinIO directly) functions correctly.
+
 *   **Lifecycle**: Exits immediately upon completion.
 
 ### 3. `radio`
@@ -42,6 +65,7 @@ The topology consists of four distinct services:
 *   **Build**: Built from `radio-server/Dockerfile`.
     *   Two-stage build: `rust:1.77-slim` for compilation, `debian:bookworm-slim` for runtime.
     *   Installs `pkg-config`, `libasound2-dev` (build time), and `libasound2` (runtime).
+    *   **CI Constraint:** After building, validate the binary does not dynamically link `libasound`: `ldd target/release/radio-server | grep asound` must return no output. If `alsa-sys` appears in `Cargo.lock`, fail the build.
 *   **Dependencies**: `depends_on: minio-setup` with the `condition: service_completed_successfully` flag.
 *   **Ports**: Exposes port `8080` (Monitor UI).
 *   **Device Passthrough**: Maps `/dev/snd` from the host to `/dev/snd` in the container.
@@ -62,12 +86,12 @@ The topology consists of four distinct services:
 
 *   **Build**: Built from `radio-client/Dockerfile`.
     *   Uses `denoland/deno:2.0.0` or a multi-stage Rust+Deno image.
-    *   *Build-time Requirement:* The Dockerfile **must** install the Rust toolchain and `wasm-pack` to compile the `decoder` crate (`wasm-pack build --target web`) before the Deno server is started, ensuring the `.js` and `.wasm` files are available in `static/`.
+    *   *Build-time Requirement:* The Dockerfile **must** install the Rust toolchain and `wasm-pack` to compile **two** WASM crates: `wasm-pack build --target web` for `decoder/flac/` (producing `flac_decoder.js` + `flac_decoder_bg.wasm`) and for `decoder/opus/` (producing `opus_decoder.js` + `opus_decoder_bg.wasm`). Both sets of outputs must be present in `static/` before the Deno server starts.
     *   Pre-caches dependencies with `deno cache main.tsx`.
 *   **Dependencies**: `depends_on: minio-setup` with the `condition: service_completed_successfully` flag.
 *   **Ports**: Exposes port `3000` (Listener Interface).
 *   **Environment Variables**:
-    *   `R2_PUBLIC_URL`: `http://localhost:9000/${R2_BUCKET}`. The Hono server injects this URL into the frontend so the browser can fetch audio chunks directly from the local MinIO instance (simulating the Cloudflare R2 edge).
+    *   `R2_PUBLIC_URL`: `http://localhost:9000/${R2_BUCKET}`. Injected into the rendered HTML as a `data-r2-url` attribute on `<radio-player>`. The Deno server does not proxy traffic using this URL.
     *   `PORT`: `3000`
 
 ## Volumes
@@ -80,3 +104,35 @@ The orchestration relies on two configuration files:
 
 *   **`.env`**: Used by default for local development. Contains values like `MINIO_USER`, `MINIO_PASS`, and `R2_BUCKET`.
 *   **`.env.prod`**: Used specifically for deploying the `radio-server` in production mode, pointing directly at Cloudflare R2 instead of the local MinIO instance. See [Production Deployment](production.md).
+## Auto-Start on Boot (Systemd)
+
+To ensure the radio server restarts automatically after a host reboot (e.g., following a kernel update), create a systemd service unit on the ThinkPad:
+
+```ini
+# /etc/systemd/system/radio-server.service
+[Unit]
+Description=Lossless Vinyl Radio Server
+Requires=docker.service
+After=docker.service network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+WorkingDirectory=/home/operator/radio-stream/radio-server
+ExecStart=/usr/bin/docker compose up -d --build
+ExecStop=/usr/bin/docker compose stop --timeout 30
+TimeoutStartSec=120
+TimeoutStopSec=45
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Enable with:
+```bash
+sudo systemctl enable radio-server.service
+sudo systemctl start radio-server.service
+```
+
+**Shutdown behaviour:** `docker compose stop --timeout 30` sends `SIGTERM` to each container and waits up to 30 seconds. The `radio` container's Rust binary must catch `SIGTERM` via `tokio::signal::unix::signal(SignalKind::terminate())` and initiate graceful shutdown: flush the current staging file, close the ALSA device, complete any in-flight S3 upload, and update the manifest to `"live": false` before exiting. See [Graceful Shutdown](../radio-server/server.md) for the implementation contract.
