@@ -46,8 +46,9 @@ The core of the player is the fetch loop, which continuously polls for new segme
 3.  **Jump-Ahead Logic:**
     *   If the player's current segment index is ahead of `latest`, sleep for `segment_s / 2` and repoll.
     *   If the player falls more than 3 segments behind `latest` (e.g., due to pausing or network stall), immediately jump to `latest - 1`.
-4.  **Segment Streaming:**
-    *   Fetch `/segment/${currentQuality}/${currentIndex}` (e.g., `hq` or `lq` based on UI state).
+4.  **Segment Streaming (Direct to CDN):**
+    *   Construct the correct URL path using the `R2_PUBLIC_URL` base injected by the server.
+    *   Fetch `${R2_PUBLIC_URL}/live/${currentQuality}/segment-${currentIndex}.flac` (or `.mp3` based on UI state).
     *   Get a `ReadableStreamDefaultReader` from the response body.
     *   Loop `reader.read()`. As each `Uint8Array` chunk arrives:
         *   Pass the chunk to the WASM decoder: `const pcm = decoder.push(chunk)`.

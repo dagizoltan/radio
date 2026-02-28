@@ -40,12 +40,11 @@ This system captures analog audio from a vinyl turntable (via a Behringer UMC404
 |  | radio-client (Deno + Hono)                          |  |
 |  |                                                     |  |
 |  |  [ SSR Frontend ]  <-- Fetches Manifest             |  |
-|  |  [ Segment Proxy ] <-- Fetches FLAC segments        |  |
 |  +-----------------------------------------------------+  |
 +-----------------------------------------------------------+
-       |
+       | (Serves HTML, Manifest, JS/WASM)
        v
-[ Browser Listener ]
+[ Browser Listener ] <-- Fetches Segments directly from R2
    |
    +-- <radio-player> Web Component
    +-- WASM FLAC Decoder
@@ -110,7 +109,7 @@ radio-stream/
 
 ### Radio Client (Deno)
 *   [Overview](radio-client/overview.md): Islands architecture connecting SSR to the Web Component and WASM decoder.
-*   [Hono SSR](radio-client/hono-ssr.md): `main.tsx` routing, HTML shell rendering, and S3 proxying.
+*   [Hono SSR](radio-client/hono-ssr.md): `main.tsx` routing, HTML shell rendering, and manifest fetching.
 *   [Player Component](radio-client/player-component.md): The `<radio-player>` Web Component and chunk-fetching loop.
 *   [AudioWorklet](radio-client/worklet.md): The browser audio thread processor handling PCM queues and playback.
 *   [WASM Decoder](radio-client/wasm-decoder.md): The Rust-to-WASM crate that parses verbatim FLAC chunks into `f32` PCM.
@@ -142,4 +141,4 @@ The system design enforces several strict rules outlined below. Violating these 
 8.  **Path-style S3 URLs**: All S3 uploads via [AWS Sig V4](radio-server/aws-sig-v4.md) must use path-style URLs to ensure compatibility between MinIO and Cloudflare R2.
 9.  **ALSA device discovery is dynamic**: The [Capture Crate](radio-server/capture.md) finds the UMC404HD card number at runtime by parsing `/proc/asound/cards`.
 10. **Tokio AsyncFd for capture, not threads**: The capture loop must use `AsyncFd` for kernel-driven wakeups instead of a blocking polling loop, as detailed in the [Capture Crate](radio-server/capture.md) doc.
-11. **No SSE Proxying**: The public `radio-client` must only poll the `manifest.json`. It must **never proxy the `/events` SSE stream** to the public internet to respect Deno Deploy connection limits.
+11. **No Proxying**: The public `radio-client` must only poll the `manifest.json` and serve static assets. The browser Web Component must fetch audio segments *directly* from the S3/R2 bucket. The Deno server must **never proxy audio segments** or the `/events` SSE stream to the public internet to conserve bandwidth and connection limits.

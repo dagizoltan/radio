@@ -32,7 +32,7 @@ The client application follows an "Islands" architecture:
 
 ## Component Connections
 
-*   **Server to R2**: The Hono server acts as a proxy, fetching `manifest.json` and segment FLAC files from the R2 bucket.
-*   **Browser to Server**: The browser fetches the initial HTML, static assets (`style.css`, JS, WASM), and continuously polls the proxied segment routes (`/segment/:id`).
+*   **Server to R2**: The Hono server acts as an SSR engine, fetching `manifest.json` from the R2 bucket to render initial state.
+*   **Browser to CDN**: The browser fetches the initial HTML and static assets (`style.css`, JS, WASM) from Deno Deploy. The client-side `<radio-player>` Web Component then continuously polls the `manifest.json` and fetches the audio segments *directly* from the S3/R2 Cloudflare bucket to bypass the Deno proxy and save bandwidth.
 *   **Player to Decoder**: The `player.ts` script instantiates the WASM module and pushes incoming byte chunks into it, receiving `f32` arrays back.
 *   **Player to Worklet**: The `player.ts` script creates the `AudioWorkletNode` and uses `postMessage` to send the `f32` arrays to the `worklet.ts` processor running on the audio thread.
