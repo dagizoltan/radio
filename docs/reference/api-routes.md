@@ -11,6 +11,7 @@ Served locally on `127.0.0.1:8080`.
 | `GET` | `/` | Serves the embedded `monitor.html` operator interface. | `text/html` | None |
 | `GET` | `/events` | Streams Server-Sent Events (SSE) detailing system state. | `text/event-stream` | `no-cache` |
 | `GET` | `/status` | Returns a point-in-time JSON snapshot of the `Arc<AppState>`. | `application/json` | None |
+| `GET` | `/metrics` | Prometheus-format telemetry metrics. Exposes counters and gauges for capture overruns, normaliser gain, S3 PUT latency, and rolling window size. See [Observability Baseline](observability-baseline.md) for the full metric list and healthy ranges. | `text/plain` | `no-cache` |
 | `POST` | `/start` | Sets the global `streaming` atomic boolean to `true`. | `text/plain` (`OK`) | None |
 | `POST` | `/stop` | Sets the global `streaming` atomic boolean to `false`. | `text/plain` (`OK`) | None |
 | `GET` | `/local/:id` | Returns the FLAC segment matching `:id` from the RAM rolling window. Prepends the cached FLAC stream header to make it playable. | `audio/flac` | `no-cache` |

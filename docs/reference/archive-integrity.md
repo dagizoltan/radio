@@ -16,23 +16,49 @@ A corrupt file produces: `recordings/recording-1234.flac: ERROR while decoding d
 The cold-storage rotation cron job must run integrity verification before uploading to the archive bucket:
 ```bash
 #!/bin/bash
-# Run as part of daily archive rotation
+# Run as part of daily archive rotation.
+# Exits non-zero if any file fails integrity check.
+# Never uploads or deletes corrupt files.
+
+set -euo pipefail
+
+RECORDING_DIR="./recordings"
 FAILED=()
-for f in ./recordings/*.flac; do
-    flac --test --silent "$f" || FAILED+=("$f")
+
+echo "Running FLAC integrity checks..."
+for f in "${RECORDING_DIR}"/*.flac; do
+    [ -e "$f" ] || { echo "No FLAC files found in ${RECORDING_DIR}"; exit 0; }
+    if flac --test --silent "$f"; then
+        echo "  OK: $f"
+    else
+        echo "  FAIL: $f" >&2
+        FAILED+=("$f")
+    fi
 done
 
 if [ ${#FAILED[@]} -gt 0 ]; then
-    echo "INTEGRITY FAILURE: ${FAILED[*]}" >&2
-    # Alert operator; do NOT upload corrupt files; do NOT delete locally
-    exit_status=1
+    echo "" >&2
+    echo "INTEGRITY FAILURE — the following files are corrupt:" >&2
+    printf '  %s\n' "${FAILED[@]}" >&2
+    echo "" >&2
+    echo "Action: Do NOT upload or delete these files. Investigate manually." >&2
+    echo "Tip: Use 'ffmpeg -i <file> -c:a flac recovered.flac' to recover complete frames." >&2
+    exit 1
 fi
 
-# Upload verified files to cold storage S3 bucket
-# ... aws s3 cp commands ...
+echo "All integrity checks passed. Proceeding with upload..."
 
-# Only delete locally after confirmed upload
+# Upload verified files to cold storage S3 bucket.
+# Replace the following with your actual upload command:
+# aws s3 cp "${RECORDING_DIR}/" s3://your-cold-storage-bucket/recordings/ --recursive --exclude "*.tmp"
+
+echo "Upload complete. Removing local copies..."
+
+# Only delete locally after confirmed upload exits 0.
+# rm "${RECORDING_DIR}"/*.flac
 ```
+
+> **`set -euo pipefail` explained:** `set -e` exits immediately if any command fails. `set -u` treats unset variables as errors. `set -o pipefail` ensures a pipeline's exit code is the first non-zero exit code. Together, these prevent silent partial failures in the rotation script.
 
 ## Partial Final Frames
 

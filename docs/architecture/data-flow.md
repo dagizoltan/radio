@@ -8,7 +8,7 @@ This document traces the lifecycle of an audio sample through the Lossless Vinyl
 2.  **Kernel / ALSA:** The Linux kernel buffers the audio frames.
 3.  **Capture (Rust - Process 1 HQ Recorder):** The [Capture Crate](./radio-server/capture.md) reads the audio frames from the ALSA device file into an interleaved `&mut [i32]` buffer via raw kernel `ioctl`s.
 4.  **Raw Encoder (Process 1 HQ Recorder):** A raw FLAC [Encoder](./radio-server/encoder.md) takes the interleaved samples and produces raw verbatim HQ FLAC frames. The Recorder task writes them directly to the local archive.
-5.  **Raw Channel Broadcast:** The raw FLAC frames are also broadcast over a `tokio::sync::broadcast` channel to be consumed by the conversion process.
+5.  **Raw Channel Broadcast:** The raw PCM samples (interleaved `i32`, one period of 4096 frames) are cloned and sent to the Converter Task over a bounded `tokio::sync::mpsc` channel (capacity 16). The channel carries raw PCM, not encoded FLAC — the Recorder encodes to FLAC for its own archive write independently. This avoids any FLAC decode step in the Converter's hot path.
 6.  **Normalization (Process 2 Converter):** The conversion process receives the raw buffer and passes it to the [Normalizer](./radio-server/normalizer.md), which applies LUFS gain riding and true-peak limiting in-place.
 7.  **Multi-Quality Encode (Process 2 Converter):** The normalized samples are encoded into an HQ normalized verbatim FLAC stream, and encoded into a Lower Quality (LQ) Opus stream (128 kbps stereo, wrapped in an Ogg container) for lower bandwidth listeners. The Opus codec achieves perceptual transparency at 128 kbps while consuming roughly half the bandwidth of the verbatim HQ FLAC stream.
 8.  **Segment Assembly & Broadcast:** The Converter task accumulates frames into 10-second segments, assembling complete standalone files (FLAC for HQ, Opus for LQ) in memory. It broadcasts these assembled segments over dedicated channels.
@@ -18,20 +18,30 @@ This document traces the lifecycle of an audio sample through the Lossless Vinyl
 13. **AudioWorklet Queue:** The `f32` PCM data is posted via `MessagePort` to the [AudioWorklet](./radio-client/worklet.md), which appends it to an internal ring buffer queue.
 14. **Playback:** The `AudioWorkletProcessor` pulls 128 frames at a time from its queue, applies volume scaling, and outputs the stereo signal to the browser's audio destination, where it is finally converted back to analog by the listener's DAC and sent to the speakers.
 
-## Two Broadcast Channel Design
+## Two-Channel Pipeline Design
 
-The `radio-server` utilizes two distinct `tokio::sync::broadcast` channels. This is a critical design constraint to guarantee the local archive remains an unadulterated copy of the captured signal.
+The `radio-server` audio pipeline uses two dedicated `tokio::sync::mpsc` channels for audio data, plus one `tokio::sync::broadcast` channel exclusively for control/SSE events. This is a critical design constraint.
 
-*   **Raw Channel:** Carries `Bytes` of unprocessed, raw FLAC frames.
-    *   **Subscribers:** The Recorder Task; The Converter Task
+### Raw PCM Channel (`mpsc`, capacity 16)
+- **Producer:** The Recorder Task (sole ALSA reader).
+- **Consumer:** The Converter Task (sole receiver).
+- **Payload:** Raw interleaved PCM samples — `Arc<Vec<i32>>` or equivalent, one period (4096 frames) per message.
+- **Why PCM, not FLAC:** The Recorder encodes the same PCM buffer to FLAC independently for the archive write. Sending PCM to the Converter means the Converter can normalise and re-encode to HQ FLAC and Opus directly, without a FLAC decode step in the hot path.
+- **Back-pressure:** If the Converter falls behind (CPU-bound normalisation spike), the bounded channel causes the Recorder's `send()` to return `Err`. The Recorder logs the drop and continues — one dropped period means ~85ms of silence in the archive, which is preferable to unbounded RAM growth.
 
-Because `tokio::sync::broadcast` drops frames when a receiver lags, both subscribers must handle `RecvError::Lagged` by logging the drop count and triggering a controlled restart of the affected task.
-*   **Normalized Channel:** Carries `Bytes` of normalized FLAC frames.
-    *   **Subscribers:** The R2 Uploader Task.
+### Segment Channel (`mpsc`, capacity 3)
+- **Producer:** The Converter Task.
+- **Consumer:** The Cloud Uploader Task (sole receiver).
+- **Payload:** Completed 10-second segment files — `(SegmentIndex, HqBytes, LqBytes)`.
+- **Back-pressure:** If the Uploader is behind (R2 slow or retrying), the bounded channel blocks the Converter. At capacity 3, the Converter can buffer ~30 seconds of segments in RAM (~9 MB) before applying back-pressure. This is the documented maximum RAM spike.
 
-The normalizer processes samples in a mutable buffer *after* the raw frames have been encoded and dispatched, ensuring the original capture path is never touched by the gain rider or limiter.
+### SSE Event Bus (`broadcast`)
+- **Producer:** Any task.
+- **Consumers:** All connected monitor UI SSE clients (via `sse_tx`).
+- **Payload:** JSON event strings (status, VU levels, gain, recording info, R2 upload status).
+- **Drop policy:** `RecvError::Lagged` from the broadcast channel is benign here — a monitor UI client that falls behind simply misses a VU meter update, not audio data.
 
-**CRITICAL CONSTRAINT:** The normalizer must never touch the recorded audio. Two broadcast channels, not one. Raw frames go to the recorder. Normalized frames go to the R2 uploader.
+**CRITICAL CONSTRAINT:** The normalizer must never touch the recorded audio. The Recorder encodes raw PCM to FLAC and writes it to the archive before the PCM is sent to the Converter. The Converter's normalisation operates on a separate copy of the PCM buffer.
 
 ## Segment Lifecycle
 

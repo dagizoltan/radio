@@ -17,7 +17,7 @@
 | Field | Type | Description |
 |---|---|---|
 | `live` | `boolean` | `true` if the server is actively uploading segments. Set to `false` during startup sweep and on graceful shutdown. |
-| `latest` | `u64` | 8-digit-compatible integer. The index of the most recently completed and uploaded segment. Wraps at 100,000,000. |
+| `latest` | `number` (safe integer) | 8-digit-compatible integer. The index of the most recently completed and uploaded segment. Always in the range `0` – `99,999,999`, which is safely representable as a JavaScript `number` (well below `Number.MAX_SAFE_INTEGER` of 2⁵³ − 1). No `BigInt` handling is required. Wraps at 100,000,000 via modular arithmetic on the server. |
 | `segment_s` | `u32` | Duration of each segment in seconds. Always `10` in this implementation. Used by the client for latency calculation. |
 | `updated_at` | `u64` | Unix timestamp in milliseconds of the last successful segment upload. Used by the client to detect stale manifests (if `updated_at` is more than `segment_s * 3` seconds in the past, the stream may be down). |
 | `qualities` | `string[]` | Available quality levels. Always `["hq", "lq"]`. Used by the player to validate the quality selector options. |
