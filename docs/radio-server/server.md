@@ -41,7 +41,7 @@ Handles direct hardware capture and local uncompressed archiving.
 
 Consumes the raw stream, normalizes it, and encodes it into multiple qualities (HQ and LQ).
 
-1.  Receives from the bounded `mpsc` channel. The `broadcast` channel is retained only for control/status messages (SSE events, shutdown signals).
+1.  Receives from the bounded `mpsc` channel. The `broadcast` channel carries only JSON event strings for the monitor UI SSE feed. Shutdown is coordinated via a cancellation token, not via the broadcast channel.
 2.  Initializes the `Normalizer`.
 3.  Initializes the audio encoders: one `FlacEncoder` for the normalized HQ stream (24-bit), and one Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`) with an `ogg::PacketWriter` for container framing. Before encoding, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets; the Ogg writer accumulates them into pages. Each 10-second segment is assembled as a complete, self-contained Ogg Opus stream (includes the two header pages prepended).
 4.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames. No decoding step is required — the PCM arrives ready for normalisation.
@@ -66,7 +66,8 @@ Receives completed segments and handles S3 uploads and manifest management.
         4. Resume uploading from `(highest_found_index + 1) % 100_000_000` (or `0` if none found).
         5. After the first successful segment upload: write `manifest.json` with `"live": true` and the new `latest` index.
 
-**Why LIST before writing the offline manifest:** Writing `"latest": 0` in the offline manifest causes all connected clients to reset their `currentIndex` to 0. When `live: true` is published with the real index (e.g., 1,042), every client triggers the jump-ahead logic and makes a burst of manifest polls simultaneously. Using the last known index avoids this thundering-herd effect on reconnect.
+> **Why LIST before writing the offline manifest:** Writing `"latest": 0` in the offline manifest causes all connected clients to reset their `currentIndex` to 0. When `live: true` is published with the real index (e.g., 1,042), every client triggers the jump-ahead logic and makes a burst of manifest polls simultaneously. Using the last known index avoids this thundering-herd effect on reconnect.
+
 2.  Receives completed HQ and LQ segment files from the Converter Task via a bounded `tokio::sync::mpsc` channel (capacity 3). The Uploader is the sole receiver. If the channel is full due to upload back-pressure, the Converter's send returns an error and logs `WARN: uploader lagging`.
 3.  Loops, receiving assembled segment files.
 4.  **Upload:**

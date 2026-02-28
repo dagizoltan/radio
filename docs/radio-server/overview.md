@@ -29,8 +29,8 @@ The main binary runs three distinct primary processes (logically separated, thou
 
 **Error Handling Strategy:** All processes must employ a robust error-handling strategy (e.g., using `anyhow` for application-level errors or a custom `thiserror` enum for library crates). A transient failure (such as an `EWOULDBLOCK` from ALSA or a temporary network drop in the S3 uploader) must be logged and retried. A fatal failure in one task must signal the cancellation token to gracefully tear down the other tasks via the `tokio::select!` macro, flushing buffers and closing file handles before the process exits.
 
-1.  **Process 1: HQ Recorder Task**: Reads directly from the ALSA capture device, encodes raw high-quality (HQ) FLAC verbatim frames, writes them to the local archive disk, and broadcasts the raw frames to the converter.
-2.  **Process 2: Converter Task**: Receives the raw HQ frames, normalizes the signal, and encodes it into multiple qualities (e.g., normalized HQ, and a down-sampled/down-bitrate LQ version). It assembles these into complete 10-second segments and broadcasts them.
+1.  **Process 1: HQ Recorder Task**: Reads directly from the ALSA capture device, encodes raw high-quality (HQ) FLAC verbatim frames, writes them to the local archive disk, and sends the raw PCM periods to the Converter Task via a bounded `mpsc` channel (capacity 16).
+2.  **Process 2: Converter Task**: Receives the raw HQ frames, normalizes the signal, and encodes it into multiple qualities (e.g., normalized HQ, and a down-sampled/down-bitrate LQ version). It assembles these into complete 10-second segments and sends the completed segments to the Cloud Uploader Task via a bounded `mpsc` channel (capacity 3).
 3.  **Process 3: Cloud Uploader Task**: Receives the completed HQ and LQ segments, manages the rolling window queue, uploads all segment files to S3, and updates the multi-quality stream `manifest.json`.
 
 *(An additional **HTTP Task** runs concurrently to serve the local operator monitor UI on `127.0.0.1:8080` and manage SSE connections.)*

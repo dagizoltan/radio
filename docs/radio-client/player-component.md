@@ -20,6 +20,8 @@ When the element is inserted into the DOM, `connectedCallback` fires:
 
 To prevent duplicate decoder pipelines and doubled R2 egress from a single user, the player uses the **Web Locks API** to enforce a single active playback instance across all tabs:
 
+> ⚠️ **The following pattern is shown for illustration only and will silently fail — see the implementation note below for the correct approach.**
+
 ```javascript
 async connectedCallback() {
   // ... render UI ...
