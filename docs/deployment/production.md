@@ -25,6 +25,8 @@ chronyc tracking
 
 **Acceptable offset threshold:** < 1 second at all times. If `timedatectl` shows `NTPSynchronized=no` or chrony shows offset > 10 seconds, investigate NTP connectivity before deploying. Configure the ThinkPad to use a nearby NTP pool (`pool.ntp.org` or a regional equivalent) in `/etc/systemd/timesyncd.conf` or `/etc/chrony.conf`.
 
+**Clock Skew Mitigation:** Even with NTP, host clock drift can occur. The custom AWS Signature V4 implementation in the S3 Uploader task should proactively mitigate this by calculating a clock skew offset. It periodically fetches the `Date` header from an R2 response and adjusts the local `RequestDateTime` and `x-amz-date` accordingly, preventing spurious 403 errors when the system clock drifts slightly out of sync.
+
 **Alarm:** If the S3 uploader begins receiving `403` responses after a period of success, check NTP sync status before investigating credentials.
 
 ## Step 1: Cloudflare R2 Setup
