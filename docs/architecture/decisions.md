@@ -84,3 +84,29 @@ The `AudioWorklet` manages its internal PCM state using a single, pre-allocated 
 If a mobile listener loses their internet connection (e.g., entering a tunnel) for 45 seconds, the `radio-player` fetch loop will fail.
 
 *   **Rationale:** The player must not crash or permanently play 45 seconds behind live when the connection is restored. The fetch loop catches `fetch()` exceptions and enters an incremental backoff retry state. Once reconnected, it polls the `manifest.json`. If it detects the player's `currentIndex` is drastically behind the manifest's `latest` index (e.g., `currentIndex < latest - 3`), it invokes the "Jump-Ahead Logic" to instantly snap back to the live edge, dropping the missed segments and resuming real-time playback seamlessly.
+
+## CDN Edge Caching Strategy
+
+The S3 Uploader explicitly sets `Cache-Control` headers when pushing to Cloudflare R2 to ensure the CDN scales infinitely without hitting the origin bucket.
+
+*   **Rationale:** If a thousand listeners request the same 10-second chunk simultaneously, the edge CDN must serve it to prevent high egress costs and bucket throttling.
+*   **Constraint:** FLAC/MP3 segments must be uploaded with `Cache-Control: public, max-age=31536000, immutable` (they never change once uploaded). The `manifest.json` must be uploaded with `Cache-Control: no-store, max-age=0` (it must always be fetched fresh to find the newest chunks).
+
+## Clock Drift and Buffer Management
+
+The browser client implements dynamic buffer management to counteract internal clock drift between the ThinkPad recording the audio and the listener's browser playing it.
+
+*   **Rationale:** If the browser plays audio slightly faster than the server encodes 10-second chunks, the browser will eventually run out of data and stall. Conversely, if it plays slower, the buffer will bloat and latency will increase infinitely.
+*   **Implementation:** The client monitors its internal buffer depth. If it detects drift accumulating beyond safe thresholds, it will either silently drop an old chunk (if drifting too far behind) or induce a brief pause to allow the buffer to refill (if playing too fast), ensuring long-term sync stability.
+
+## CORS Security Policy
+
+The cloud storage bucket (R2/MinIO) enforces a strict Cross-Origin Resource Sharing (CORS) policy.
+
+*   **Rationale:** Because the `radio-client` Web Component fetches segments directly from the bucket (to bypass the Deno proxy and save bandwidth), the bucket must explicitly allow cross-origin `GET` requests from the Deno Deploy frontend URL, preventing unauthorized embedding or leeching from other domains.
+
+## Archival Storage Rotation
+
+The ThinkPad running the `radio-server` requires a rotation strategy for the pristine `./recordings` directory.
+
+*   **Rationale:** The HQ Recorder process generates a bit-perfect 24-bit/48kHz FLAC copy of the stream. This consumes roughly 1.5 GB to 2 GB per hour. To prevent the local drive from filling up over continuous broadcast periods, the system must rely on an external rotation mechanism (e.g., a cron job moving old recordings to cold storage/NAS) rather than attempting to manage this within the Rust process itself.
