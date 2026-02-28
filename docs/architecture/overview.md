@@ -1,6 +1,6 @@
 # Architecture Overview
 
-The Lossless Vinyl Radio Streaming System is a two-part architecture designed to capture analog audio, encode it losslessly to FLAC, archive it locally, and stream it to listeners worldwide with minimal latency.
+The Lossless Vinyl Radio Streaming System is a two-part architecture designed to capture analog audio, encode it losslessly to FLAC, archive it locally, and stream it to listeners worldwide. The primary goal is achieving production-grade, high-quality (HQ) audio delivery, prioritizing stream stability and flawless playback over ultra-low latency.
 
 ## System Diagram
 
@@ -61,7 +61,7 @@ The Lossless Vinyl Radio Streaming System is a two-part architecture designed to
 2. **ALSA Interface:** The `radio-server` captures the audio directly from the Linux kernel ALSA interface using raw ioctls.
 3. **Process 1: HQ Recorder:** The raw PCM audio is captured and encoded into high-quality FLAC verbatim subframes. It is saved directly to a local `./recordings` directory. This process isolates the archival bit-perfect copy.
 4. **Process 2: Converter:** A separate converter process consumes the raw audio, passes it through a [two-stage normalizer](../radio-server/normalizer.md) (LUFS gain rider and true-peak limiter), and encodes it into multiple qualities (e.g., HQ FLAC and an LQ variant for lower bandwidth).
-5. **Process 3: Cloud Uploader:** The multi-quality segments and a `manifest.json` are uploaded to an S3-compatible storage backend ([Cloudflare R2 in production, MinIO locally](../deployment/docker-compose.md)). The uploader manages the rolling window.
+5. **Process 3: Cloud Uploader:** The multi-quality segments and a `manifest.json` are uploaded to an S3-compatible storage backend ([Cloudflare R2 in production, MinIO locally](../deployment/docker-compose.md)). The uploader manages the rolling window, supplemented by S3 Object Lifecycle Rules for robust cleanup.
 6. **Listener Client:** The listener visits the Deno Deploy frontend (`radio-client`). The frontend fetches the manifest and serves the HTML shell.
 7. **Browser Playback:** The browser loads a Web Component island that continuously polls the manifest and fetches FLAC segments via the Deno proxy. The segments are decoded in the browser using a [WASM FLAC decoder](../radio-client/wasm-decoder.md) and played via an [AudioWorklet](../radio-client/worklet.md).
 

@@ -20,7 +20,8 @@ The server pipeline uses two separate `tokio::sync::broadcast` channels: one for
 
 The [Encoder](../radio-server/encoder.md) only outputs verbatim FLAC subframes (uncompressed PCM wrapped in FLAC framing), bypassing LPC (Linear Predictive Coding) and Rice coding.
 
-*   **Rationale:** Producing verbatim subframes dramatically simplifies the encoder and decoder implementations. It eliminates the need for complex mathematical modeling and prediction algorithms in the hot path. While the files are larger than fully compressed FLAC, they remain perfectly compliant with the standard FLAC specification and retain the essential benefits: self-contained framing, robust sync codes, and checksums (CRC-8/CRC-16). Given the ThinkPad's upload bandwidth (~10.68 Mbps) comfortably exceeds the ~1.41 Mbps requirement for uncompressed CD audio, the size tradeoff is worthwhile for the massive gain in simplicity and reliability.
+*   **Rationale:** Producing verbatim subframes dramatically simplifies the encoder and decoder implementations. It eliminates the need for complex mathematical modeling and prediction algorithms in the hot path. While the files are larger than fully compressed FLAC, they remain perfectly compliant with the standard FLAC specification and retain the essential benefits: self-contained framing, robust sync codes, and checksums (CRC-8/CRC-16).
+*   **Future Enhancement Note:** To balance the massive gain in simplicity with bandwidth efficiency (server to cloud), a lightweight FLAC compression strategy—such as basic Rice coding or a lower-level compression preset—can be introduced. This would reduce the payload size by 15-30% without significantly increasing CPU overhead on the encoder or decoder.
 
 ## Why a custom WASM decoder?
 
@@ -48,7 +49,8 @@ The R2 Uploader actively maintains a queue of uploaded segments and issues `DELE
 
 *   **Rationale:** Cloudflare R2 does not have a native, immediate Time-to-Live (TTL) feature that deletes objects precisely when they expire. To prevent unbounded storage growth for a continuous live stream, the server must manage the lifecycle manually. A rolling window ensures exactly 3 segments are stored per quality stream at any time.
     *   *Startup Cleanup:* To prevent "orphaned" segments resulting from an abrupt crash where the rolling window queue in RAM is lost, the server executes a one-time "cleanup sweep" of the S3 bucket prefixes (`live/hq/` and `live/lq/`) upon startup, issuing `DELETE`s for all existing segments before resuming broadcast.
-*   **Constraint:** Rolling window, not TTL. The uploader maintains a `VecDeque` of uploaded keys and deletes the oldest immediately when the window exceeds 3 segments.
+    *   *Robust Cleanup Fallback:* In production, this manual rolling window is heavily supplemented by cloud provider S3 Object Lifecycle Rules (e.g., Cloudflare R2 bucket policies) configured to automatically delete segments older than a few minutes. This acts as a robust safety net against storage leaks and orphaned files if the server process crashes ungracefully.
+*   **Constraint:** Rolling window, not TTL. The uploader maintains a `VecDeque` of uploaded keys and deletes the oldest immediately when the window exceeds 3 segments, while relying on the cloud platform's bucket policy for an ultimate backup.
 
 ## Why a Custom Chunk-Streaming Architecture (Why not HLS/Icecast)?
 
@@ -57,6 +59,7 @@ The system builds its own segmented streaming protocol (a JSON manifest pointing
 *   **Rationale:**
     *   *Vs. Icecast:* Icecast requires a long-lived, dedicated TCP connection from every listener to a central server. This scales poorly and is vulnerable to transient network drops. Our architecture pushes static chunks to an edge CDN (Cloudflare R2), making delivery infinitely scalable, cacheable, and resilient to client network hiccups.
     *   *Vs. HLS/MPEG-DASH:* Modern platforms chunk media into segments (like we do) and use an `.m3u8` playlist. Browsers play these chunks natively using the Media Source Extensions (MSE) API. **However, browsers generally do not support FLAC via MSE.** If we used standard HLS, we would be forced to use lossy codecs (AAC/MP3) for everything, sacrificing our primary 24-bit lossless archival and broadcast goal. By building a custom chunk-fetcher, a WASM decoder, and an `AudioWorklet`, we completely bypass the browser's native codec limitations.
+    *   *Chunk Size vs. Latency:* While 10-second chunks inherently introduce a high latency of 10-20 seconds (the time to encode, upload, and for the client to fetch), the primary goal of this system is **production-grade, high-quality audio stability**, not ultra-low latency. Using 10-second segments significantly reduces the volume of HTTP PUT/GET requests, lowering overall system stress and making client-side playback alignment via WebAssembly far more reliable with fewer gapless playback transitions to compute.
 
 ## Why MP3 for the LQ stream?
 
