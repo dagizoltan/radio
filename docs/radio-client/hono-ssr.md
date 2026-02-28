@@ -1,6 +1,6 @@
 # Hono SSR (main.tsx)
 
-The `main.tsx` file is the entry point for the Deno application. It uses the Hono framework and its JSX engine to provide Server-Side Rendering (SSR) and manifest proxying.
+The `main.tsx` file is the entry point for the Deno application. It uses the Hono framework and its JSX engine to provide Server-Side Rendering (SSR) and injects initial state for the client.
 
 ## Server-Side Rendering
 
@@ -24,10 +24,6 @@ When a client makes a `GET /` request, the server executes the following sequenc
 
 *Requirement:* The S3/R2 bucket must have a strict CORS policy enabled (`Access-Control-Allow-Origin` matching the Deno Deploy URL) to allow the browser client to fetch these segments directly.
 
-### Manifest Proxy
-
-The server acts as a proxy for the `manifest.json` file from the S3 bucket to manage caching headers, ensuring clients always see the latest live edge.
-
 **No manifest proxy.** The Deno server does not proxy `manifest.json`. The `<radio-player>` Web Component fetches it directly from `${data-r2-url}/live/manifest.json`. Removing this proxy route eliminates the Deno server from the media-critical path.
 ### `GET /static/:file`
 
@@ -35,7 +31,7 @@ The server acts as a proxy for the `manifest.json` file from the S3 bucket to ma
 
 ### SSE Proxying Constraints
 
-The Deno proxy server must strictly rely on standard HTTP polling to fetch the `manifest.json`. It must **never** attempt to proxy the `/events` SSE stream from the Rust server to the public browser client. The SSE stream is exclusively for the local operator monitor UI (`localhost:8080`).
+The Deno server must strictly rely on standard HTTP polling to fetch the `manifest.json`. It must **never** attempt to proxy the `/events` SSE stream from the Rust server to the public browser client. The SSE stream is exclusively for the local operator monitor UI (`localhost:8080`).
 
 ## Environment Variables
 
