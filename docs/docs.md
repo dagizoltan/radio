@@ -39,7 +39,7 @@ This system captures analog audio from a vinyl turntable (via a Behringer UMC404
 |  +-----------------------------------------------------+  |
 |  | radio-client (Deno + Hono)                          |  |
 |  |                                                     |  |
-|  |  [ SSR Frontend ]  <-- Fetches Manifest             |  |
+|  |  [ SSR Frontend ]  <-- Fetches Manifest (SSR only)  |  |
 |  +-----------------------------------------------------+  |
 +-----------------------------------------------------------+
        | (Serves HTML, Manifest, JS/WASM)
@@ -47,7 +47,8 @@ This system captures analog audio from a vinyl turntable (via a Behringer UMC404
 [ Browser Listener ] <-- Fetches Segments directly from R2
    |
    +-- <radio-player> Web Component
-   +-- WASM FLAC Decoder
+   +-- WASM FLAC Decoder (HQ)
+   +-- WASM Opus Decoder (LQ)
    +-- AudioWorklet
 ```
 
