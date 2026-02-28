@@ -15,12 +15,15 @@ The Lossless Vinyl Radio Streaming System is a two-part architecture designed to
 | Lenovo ThinkPad X270 (Ubuntu Linux)                       |
 |                                                           |
 |  +-----------------------------------------------------+  |
-|  | radio-server (Rust)                                 |  |
+|  | radio-server (Rust - 3 Processes)                   |  |
 |  |                                                     |  |
-|  |  [ Capture ] -> [ Raw Encoder ] -> [ Local Archive ]|  |
-|  |       |                                             |  |
-|  |       v                                             |  |
-|  |  [ Normalizer ] -> [ Encoder ] -> [ R2 Uploader ]   |  |
+|  |  1. [ HQ Recorder ] -> [ Local Archive ]            |  |
+|  |           |                                         |  |
+|  |           v                                         |  |
+|  |  2. [ Converter (Norm, HQ & LQ Encode) ]            |  |
+|  |           |                                         |  |
+|  |           v                                         |  |
+|  |  3. [ Cloud Uploader ] -> [ R2 Storage ]            |  |
 |  |                                                     |  |
 |  |  [ HTTP/SSE Monitor UI ]                            |  |
 |  +-----------------------------------------------------+  |
@@ -56,9 +59,9 @@ The Lossless Vinyl Radio Streaming System is a two-part architecture designed to
 
 1. **Analog Capture:** The analog mixer's REC OUT is connected to inputs 1 and 2 of the Behringer UMC404HD USB audio interface.
 2. **ALSA Interface:** The `radio-server` captures the audio directly from the Linux kernel ALSA interface using raw ioctls.
-3. **Raw Encoding & Archiving:** The raw PCM audio is encoded into FLAC verbatim subframes and saved to a local `./recordings` directory. This ensures the archive is a bit-perfect, unprocessed copy of the capture.
-4. **Normalization & Streaming:** The raw audio is simultaneously passed through a [two-stage normalizer](../radio-server/normalizer.md) (LUFS gain rider and true-peak limiter). The normalized audio is encoded into FLAC and grouped into 10-second segments.
-5. **R2 Upload:** Segments and a `manifest.json` are uploaded to an S3-compatible storage backend ([Cloudflare R2 in production, MinIO locally](../deployment/docker-compose.md)). The uploader maintains a rolling window of 3 segments.
+3. **Process 1: HQ Recorder:** The raw PCM audio is captured and encoded into high-quality FLAC verbatim subframes. It is saved directly to a local `./recordings` directory. This process isolates the archival bit-perfect copy.
+4. **Process 2: Converter:** A separate converter process consumes the raw audio, passes it through a [two-stage normalizer](../radio-server/normalizer.md) (LUFS gain rider and true-peak limiter), and encodes it into multiple qualities (e.g., HQ FLAC and an LQ variant for lower bandwidth).
+5. **Process 3: Cloud Uploader:** The multi-quality segments and a `manifest.json` are uploaded to an S3-compatible storage backend ([Cloudflare R2 in production, MinIO locally](../deployment/docker-compose.md)). The uploader manages the rolling window.
 6. **Listener Client:** The listener visits the Deno Deploy frontend (`radio-client`). The frontend fetches the manifest and serves the HTML shell.
 7. **Browser Playback:** The browser loads a Web Component island that continuously polls the manifest and fetches FLAC segments via the Deno proxy. The segments are decoded in the browser using a [WASM FLAC decoder](../radio-client/wasm-decoder.md) and played via an [AudioWorklet](../radio-client/worklet.md).
 
@@ -66,7 +69,7 @@ The Lossless Vinyl Radio Streaming System is a two-part architecture designed to
 
 The system is strictly divided into two independent codebases:
 
-1. **`radio-server`:** A pure Rust binary running locally on the ThinkPad. It handles hardware capture, encoding, normalization, local archiving, R2 uploading, and serving a local operator monitor UI.
+1. **`radio-server`:** A pure Rust codebase running locally on the ThinkPad. It is structurally split into three main processes: one for capturing/archiving HQ audio, one for converting the stream to multi-quality (LQ) chunks, and one for uploading chunks to the cloud. It also serves a local operator monitor UI.
 2. **`radio-client`:** A Deno + Hono application deployed to Deno Deploy. It serves the public listener interface, proxies segments from R2, and provides the Web Component and WASM decoder for browser playback.
 
 ## Docker Topology

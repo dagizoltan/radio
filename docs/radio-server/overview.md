@@ -25,12 +25,13 @@ The server is organized as a Cargo workspace containing four crates:
 
 ## Task Orchestration
 
-The main binary uses Tokio to run four concurrent tasks via `tokio::select!` in `main`:
+The main binary runs three distinct primary processes (logically separated, though orchestrated concurrently in Tokio via `tokio::select!` in `main`):
 
-1.  **Pipeline Task**: Reads from the capture device, runs the normalizer, and broadcasts raw and normalized frames.
-2.  **Recorder Task**: Receives raw frames and writes them directly to disk.
-3.  **R2 Uploader Task**: Receives normalized frames, assembles 10-second segments, uploads them to S3, and updates the manifest.
-4.  **HTTP Task**: Serves the local monitor UI (`monitor.html`) on `127.0.0.1:8080` and manages SSE connections.
+1.  **Process 1: HQ Recorder Task**: Reads directly from the ALSA capture device, encodes raw high-quality (HQ) FLAC verbatim frames, writes them to the local archive disk, and broadcasts the raw frames to the converter.
+2.  **Process 2: Converter Task**: Receives the raw HQ frames, normalizes the signal, and encodes it into multiple qualities (e.g., normalized HQ, and a down-sampled/down-bitrate LQ version). It assembles these into complete 10-second segments and broadcasts them.
+3.  **Process 3: Cloud Uploader Task**: Receives the completed HQ and LQ segments, manages the rolling window queue, uploads all segment files to S3, and updates the multi-quality stream `manifest.json`.
+
+*(An additional **HTTP Task** runs concurrently to serve the local operator monitor UI on `127.0.0.1:8080` and manage SSE connections.)*
 
 ## Shared State
 

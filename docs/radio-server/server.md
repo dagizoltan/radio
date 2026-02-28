@@ -17,55 +17,55 @@ All state is held in an `Arc<AppState>` and shared safely across tasks:
 *   `flac_header: Mutex<Option<Bytes>>`: The cached FLAC stream header (`fLaC` + `STREAMINFO`). Prepended to local segments before serving them.
 *   `sse_tx: broadcast::Sender<String>`: The event bus for broadcasting state changes to connected Server-Sent Events (SSE) clients on the monitor UI.
 
-## The Four Tokio Tasks
+## Process Architecture (Tokio Tasks)
 
-The `main` function executes four concurrent tasks using `tokio::select!`:
+The system is logically divided into three primary processes handling audio capture, multi-quality conversion, and cloud upload. These, along with an HTTP task, run concurrently in `main` using `tokio::select!`.
 
-### 1. Pipeline Task
+### Process 1: HQ Recorder Task
 
-The core audio processing loop.
+Handles direct hardware capture and local uncompressed archiving.
 
 1.  Opens the ALSA capture device using the [Capture Crate](capture.md).
-2.  Initializes two `FlacEncoder` instances (one raw, one normalized) and one `Normalizer`.
-3.  Caches the `stream_header()` from both encoders. Sends the raw header down the raw broadcast channel and the normalized header down the normalized broadcast channel.
+2.  Initializes a high-quality (HQ) `FlacEncoder` instance for raw encoding.
+3.  Creates a new, timestamped file in `./recordings/`.
 4.  Enters an asynchronous loop, awaiting periods from the capture device.
 5.  **For each period (4096 frames):**
-    *   Computes the peak absolute sample value for the left and right channels. Updates `vu_left` and `vu_right`.
-    *   Encodes the raw `&[i16]` buffer using the raw encoder. Sends the resulting frame bytes down the raw broadcast channel.
-    *   Copies the raw buffer to a new mutable buffer.
-    *   Calls `normalizer.process(&mut buffer)`.
-    *   Emits VU levels and the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
-    *   Encodes the normalized buffer using the normalized encoder. Sends the resulting frame bytes down the normalized broadcast channel.
+    *   Computes the peak absolute sample value for the left and right channels for the UI. Updates `vu_left` and `vu_right`.
+    *   Encodes the raw `&[i16]` buffer into raw verbatim HQ FLAC frames.
+    *   Writes the frames directly to the local archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
+    *   Broadcasts the raw frames via the raw `tokio::sync::broadcast` channel to the converter process.
+    *   Emits VU levels to `sse_tx`.
+6.  On shutdown, it flushes the file and logs the final size.
 
-### 2. Recorder Task
+### Process 2: Converter Task
 
-Handles the local archiving of the stream.
+Consumes the raw stream, normalizes it, and encodes it into multiple qualities (HQ and LQ).
 
 1.  Subscribes to the raw broadcast channel.
-2.  Creates a new, timestamped file in `./recordings/`.
-3.  Loops, receiving `Bytes` (raw FLAC frames) from the channel.
-4.  Writes every frame directly to the file using `AsyncWriteExt::write_all`.
-5.  Updates `recording_bytes`.
-6.  Spawns a background ticker task that emits a `recording` status event to `sse_tx` every 1 second.
-7.  On channel close (e.g., shutdown), it flushes the file and logs the final size.
+2.  Initializes the `Normalizer` and multiple `FlacEncoder` instances (one for normalized HQ, one down-sampled/down-bitrate for LQ).
+3.  Loops, receiving raw FLAC frames and extracting the interleaved `i16` buffer.
+4.  Copies the raw buffer to a new mutable buffer and calls `normalizer.process(&mut buffer)`.
+5.  Encodes the normalized buffer into the respective HQ and LQ FLAC streams.
+6.  Emits the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
+7.  **Segment Assembly:** Accumulates the encoded frames for both qualities. When the target 10-second duration is reached (based on PCM sample count equivalent):
+    *   Assembles complete, standalone FLAC files in memory by prepending the respective stream headers.
+    *   Broadcasts the completed HQ and LQ segment files (as `Bytes`) over dedicated segment channels to the Cloud Uploader.
 
-### 3. R2 Uploader Task
+### Process 3: Cloud Uploader Task
 
-Handles assembling FLAC segments and uploading them to S3.
+Receives completed segments and handles S3 uploads and manifest management.
 
-1.  Subscribes to the normalized broadcast channel.
-2.  Loops, receiving `Bytes` (normalized FLAC frames).
-3.  **Segment Assembly:** Accumulates frames into an internal `Vec<u8>`. The target size is equivalent to 10 seconds of raw PCM audio (approx. `44100 * 2 * 2 * 10 = 1,764,000` bytes). *Note: The actual accumulated FLAC bytes will be less, but the threshold is based on the PCM equivalent duration.*
-4.  **Upload:** Once the 10-second threshold is reached:
-    *   Assembles a complete, standalone FLAC file in memory by prepending the cached normalized stream header to the accumulated frames.
-    *   Uploads the segment to S3 using raw HTTP with [AWS Signature V4](aws-sig-v4.md).
-    *   Key format: `live/segment-{:06}.flac`.
-    *   Writes `live/manifest.json` containing: `{"live": true, "latest": index, "segment_s": 10, "updated_at": timestamp}`.
-5.  **Rolling Window:** Maintains a `VecDeque<String>` of uploaded S3 keys. If the deque length exceeds 3, it pops the oldest key and sends a `DELETE` request to S3.
-6.  Pushes the new segment index and `Bytes` into `local_segments` (keeping only the last 3).
-7.  Updates `r2_segment`, `r2_last_ms`, and `r2_uploading`. Emits `r2` status events to `sse_tx` during and after the upload.
+1.  Subscribes to the completed HQ and LQ segment broadcast channels.
+2.  Loops, receiving assembled segment files.
+3.  **Upload:**
+    *   Uploads the segments to S3 using raw HTTP with [AWS Signature V4](aws-sig-v4.md).
+    *   Key format uses quality folders: e.g., `live/hq/segment-{:06}.flac` and `live/lq/segment-{:06}.flac`.
+    *   Writes `live/manifest.json` containing metadata for both streams: `{"live": true, "latest": index, "segment_s": 10, "updated_at": timestamp, "qualities": ["hq", "lq"]}`.
+4.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 3 segments per quality, it issues `DELETE` requests for the oldest objects.
+5.  Pushes the new HQ segment into `local_segments` (keeping only the last 3) for the local operator monitor playback.
+6.  Updates `r2_segment`, `r2_last_ms`, and `r2_uploading`. Emits `r2` status events to `sse_tx` during and after the upload.
 
-### 4. HTTP Task
+### HTTP Task
 
 Serves the local monitor UI on `127.0.0.1:8080` using `axum`.
 

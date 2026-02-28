@@ -22,6 +22,6 @@ Served via Deno Deploy (or `localhost:3000` via Compose). Acts as a proxy to S3/
 | Method | Path | Description | Response Type | Caching |
 | :--- | :--- | :--- | :--- | :--- |
 | `GET` | `/` | SSR Hono route. Fetches the manifest from R2 and renders the full HTML shell containing the `<radio-player>`. | `text/html` | None |
-| `GET` | `/manifest.json` | Proxies the `live/manifest.json` from the R2 bucket. | `application/json` | `no-cache, no-store, must-revalidate` (Critical for live edge discovery) |
-| `GET` | `/segment/:id` | Proxies `live/segment-{padded}.flac` from the R2 bucket. | `audio/flac` | `public, max-age=31536000, immutable` (Segments are permanently immutable) |
+| `GET` | `/manifest.json` | Proxies the `live/manifest.json` from the R2 bucket. The manifest now includes `qualities: ["hq", "lq"]`. | `application/json` | `no-cache, no-store, must-revalidate` (Critical for live edge discovery) |
+| `GET` | `/segment/:quality/:id` | Proxies `live/{quality}/segment-{padded}.flac` from the R2 bucket based on user selection (`hq` or `lq`). | `audio/flac` | `public, max-age=31536000, immutable` (Segments are permanently immutable) |
 | `GET` | `/static/:file` | Serves JS, CSS, and WASM assets from the local `static/` directory. | varies (`text/css`, `application/javascript`, `application/wasm`) | Standard static asset caching |

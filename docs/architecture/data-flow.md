@@ -6,14 +6,13 @@ This document traces the lifecycle of an audio sample through the Lossless Vinyl
 
 1.  **ADC (Analog-to-Digital Conversion):** The Behringer UMC404HD converts the analog signal to digital (44100 Hz, 16-bit, stereo).
 2.  **Kernel / ALSA:** The Linux kernel buffers the audio frames.
-3.  **Capture (Rust):** The [Capture Crate](../radio-server/capture.md) reads the audio frames from the ALSA device file into an interleaved `&mut [i16]` buffer via raw kernel `ioctl`s when the file descriptor becomes readable.
-4.  **Raw Encoder:** A raw FLAC [Encoder](../radio-server/encoder.md) takes the interleaved samples and produces raw verbatim FLAC frames.
-5.  **Raw Channel Broadcast:** The raw FLAC frames are broadcast over the raw `tokio::sync::broadcast` channel. The Recorder task receives these frames and writes them directly to the local archive.
-6.  **Normalization:** The original interleaved `i16` buffer is passed to the [Normalizer](../radio-server/normalizer.md), which converts the samples to `f32`, applies LUFS gain riding and true-peak limiting, and converts them back to clamped `i16` in-place.
-7.  **Normalized Encoder:** A second FLAC [Encoder](../radio-server/encoder.md) takes the normalized samples and produces normalized verbatim FLAC frames.
-8.  **Normalized Channel Broadcast:** The normalized FLAC frames are broadcast over the normalized `tokio::sync::broadcast` channel. The R2 Uploader task receives these frames.
-9.  **Segment Assembly:** The R2 Uploader accumulates normalized FLAC frames in memory until it reaches 10 seconds of audio. It prepends the FLAC stream header to create a standalone FLAC file in memory.
-10. **S3 Upload:** The assembled segment is uploaded to S3 (MinIO or R2) via raw HTTP using [AWS Signature V4](../radio-server/aws-sig-v4.md). The `manifest.json` is updated.
+3.  **Capture (Rust - Process 1 HQ Recorder):** The [Capture Crate](../radio-server/capture.md) reads the audio frames from the ALSA device file into an interleaved `&mut [i16]` buffer via raw kernel `ioctl`s.
+4.  **Raw Encoder (Process 1 HQ Recorder):** A raw FLAC [Encoder](../radio-server/encoder.md) takes the interleaved samples and produces raw verbatim HQ FLAC frames. The Recorder task writes them directly to the local archive.
+5.  **Raw Channel Broadcast:** The raw FLAC frames are also broadcast over a `tokio::sync::broadcast` channel to be consumed by the conversion process.
+6.  **Normalization (Process 2 Converter):** The conversion process receives the raw buffer and passes it to the [Normalizer](../radio-server/normalizer.md), which applies LUFS gain riding and true-peak limiting in-place.
+7.  **Multi-Quality Encode (Process 2 Converter):** The normalized samples are encoded into an HQ normalized stream, and down-sampled/encoded into a Lower Quality (LQ) stream (e.g., lower bitrate or sample rate) for lower bandwidth listeners.
+8.  **Segment Assembly & Broadcast:** The Converter task accumulates frames into 10-second segments, assembling complete standalone FLAC files in memory. It broadcasts these assembled HQ and LQ segments over a normalized segment channel.
+9.  **S3 Upload (Process 3 Cloud Uploader):** The Uploader process receives the completed segments and pushes both the HQ and LQ files to S3 (MinIO or R2) via raw HTTP using [AWS Signature V4](../radio-server/aws-sig-v4.md). The `manifest.json` is updated to point to both streams.
 11. **Proxy Fetch:** The `radio-client` proxies the segment request from the browser to S3.
 12. **Browser Fetch & Decode:** The `radio-player` Web Component in the browser fetches the segment chunk-by-chunk using a `ReadableStream`. Each chunk is passed to the [WASM Decoder](../radio-client/wasm-decoder.md), which parses the FLAC stream and yields `f32` PCM data.
 13. **AudioWorklet Queue:** The `f32` PCM data is posted via `MessagePort` to the [AudioWorklet](../radio-client/worklet.md), which appends it to an internal ring buffer queue.

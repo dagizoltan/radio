@@ -12,9 +12,9 @@ When the element is inserted into the DOM, `connectedCallback` fires:
 
 1.  **Render:** It populates `this.innerHTML` with the player's UI (if not already hydrated by SSR):
     *   A `<canvas>` element for the waveform.
-    *   A metadata section displaying the title and quality string (`"CD · 44.1kHz · 16-bit · FLAC"`).
+    *   A metadata section displaying the title and a Quality Selector toggle (e.g., `<select>` or buttons for `HQ` / `LQ`).
     *   A controls row containing a play/stop button, an animated live indicator dot, a latency display, and a volume `<input type="range">`.
-2.  **Event Binding:** It attaches click listeners to the play/stop button and input listeners to the volume slider.
+2.  **Event Binding:** It attaches click listeners to the play/stop button, input listeners to the volume slider, and change listeners to the Quality Selector.
 
 ## Playback Sequence
 
@@ -44,10 +44,11 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   If the player's current segment index is ahead of `latest`, sleep for `segment_s / 2` and repoll.
     *   If the player falls more than 3 segments behind `latest` (e.g., due to pausing or network stall), immediately jump to `latest - 1`.
 4.  **Segment Streaming:**
-    *   Fetch `/segment/${currentIndex}`.
+    *   Fetch `/segment/${currentQuality}/${currentIndex}` (e.g., `hq` or `lq` based on UI state).
     *   Get a `ReadableStreamDefaultReader` from the response body.
     *   Loop `reader.read()`. As each `Uint8Array` chunk arrives:
         *   Pass the chunk to the WASM decoder: `const pcm = decoder.push(chunk)`.
         *   If `pcm` (an `Float32Array`) has length > 0, post it to the worklet: `workletNode.port.postMessage(pcm, [pcm.buffer])` (transferring ownership for performance).
-5.  **Iteration:** When `reader.read()` returns `done: true`, increment the `currentIndex`.
+5.  **Quality Switching:** If the user changes the quality mid-stream, the current `reader.cancel()` is called. The `currentQuality` state updates, and the fetch loop immediately attempts to fetch the *same* `currentIndex` but using the new quality path, ensuring a seamless transition.
+6.  **Iteration:** When `reader.read()` returns `done: true` normally, increment the `currentIndex`.
 6.  **Latency Display:** Calculate and update the UI with the estimated latency: `(latest - currentIndex) * segment_s` seconds behind live.

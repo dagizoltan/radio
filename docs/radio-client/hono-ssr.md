@@ -26,9 +26,9 @@ The server acts as a proxy to the S3 bucket to avoid exposing the bucket directl
 *   **Response:** Returns the JSON body.
 *   **Headers:** Includes aggressive `Cache-Control: no-cache, no-store, must-revalidate` headers to ensure clients always get the freshest live edge.
 
-### `GET /segment/:id`
+### `GET /segment/:quality/:id`
 
-*   **Action:** Formats the `:id` (e.g., `42`) into the segment key format (`live/segment-000042.flac`) and fetches it from `R2_PUBLIC_URL`.
+*   **Action:** Formats the `:quality` (e.g., `hq` or `lq`) and `:id` (e.g., `42`) into the segment key format (`live/${quality}/segment-000042.flac`) and fetches it from `R2_PUBLIC_URL`.
 *   **Response:** Returns the raw bytes as `audio/flac`.
 *   **Headers:** Since segments are immutable once written, it includes aggressive caching headers (e.g., `Cache-Control: public, max-age=31536000, immutable`).
 
