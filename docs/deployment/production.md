@@ -6,6 +6,7 @@ Deploying the system for production involves reconfiguring the `radio-server` to
 
 1.  A Cloudflare account with R2 enabled.
 2.  A Deno Deploy account.
+3.  **Strict NTP Synchronization:** The ThinkPad hardware clock must be perfectly synchronized to UTC. Install and run an NTP daemon (like `chrony` or `systemd-timesyncd`). This is critical because the rolling window logic, segment accumulation timing, and R2 metadata timestamps rely on a monotonically stable, non-drifting system clock to prevent the manifest edge from going out-of-sync with the client fetch requests over long uptimes.
 
 ## Step 1: Cloudflare R2 Setup
 

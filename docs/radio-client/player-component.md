@@ -24,19 +24,21 @@ When the user clicks the "Play" button, the following sequence occurs:
 2.  **Worklet Loading:** Await `audioCtx.audioWorklet.addModule("/static/worklet.js")`.
 3.  **Node Creation:** Create an `AudioWorkletNode` named `"radio-processor"`. Pass the initial volume from the slider as a parameter.
 4.  **Analyser Chain:** Create an `AnalyserNode` for the waveform visualizer. Chain them: `workletNode.connect(analyserNode).connect(audioCtx.destination)`.
-5.  **WASM Import:** Dynamically import the WASM decoder module:
+5.  **MediaSession Integration:** Register the stream metadata with the OS-level media controls (e.g., lock screen, keyboard play/pause keys) using `navigator.mediaSession.metadata = new MediaMetadata({ title: "Lossless Vinyl Radio", artist: "Live Stream" });` and set action handlers (`setActionHandler('play', ...)`).
+6.  **WASM Import:** Dynamically import the WASM decoder module:
     ```javascript
     import init, { FlacDecoder } from "/static/flac_decoder.js";
     await init();
     const decoder = new FlacDecoder();
     ```
-6.  **Fetch Loop:** Start the main fetch loop and the waveform animation loop (`requestAnimationFrame`).
+7.  **Fetch Loop:** Start the main fetch loop and the waveform animation loop (`requestAnimationFrame`).
 
 ## Fetch Loop Algorithm
 
 The core of the player is the fetch loop, which continuously polls for new segments and streams them to the decoder.
 
 1.  **Manifest Poll:** Fetch `/manifest.json`.
+    *   **Optimization:** Implement HTTP caching by storing the `ETag` (or `Last-Modified`) from the response headers. Use `If-None-Match` in subsequent fetch requests. If the response is `304 Not Modified`, the manifest has not updated yet, saving processing and bandwidth.
     *   If offline, update the UI and retry after a delay.
     *   If live, extract `latest` segment index and `segment_s` duration.
 2.  **Buffering Strategy:** Start playing 2 segments behind the `latest` index to build a small buffer against network jitter.

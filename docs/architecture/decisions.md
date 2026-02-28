@@ -50,6 +50,14 @@ The R2 Uploader actively maintains a queue of uploaded segments and issues `DELE
     *   *Startup Cleanup:* To prevent "orphaned" segments resulting from an abrupt crash where the rolling window queue in RAM is lost, the server executes a one-time "cleanup sweep" of the S3 bucket prefixes (`live/hq/` and `live/lq/`) upon startup, issuing `DELETE`s for all existing segments before resuming broadcast.
 *   **Constraint:** Rolling window, not TTL. The uploader maintains a `VecDeque` of uploaded keys and deletes the oldest immediately when the window exceeds 3 segments.
 
+## Why a Custom Chunk-Streaming Architecture (Why not HLS/Icecast)?
+
+The system builds its own segmented streaming protocol (a JSON manifest pointing to standalone 10-second FLAC/MP3 files) rather than using industry standards like Icecast or HTTP Live Streaming (HLS).
+
+*   **Rationale:**
+    *   *Vs. Icecast:* Icecast requires a long-lived, dedicated TCP connection from every listener to a central server. This scales poorly and is vulnerable to transient network drops. Our architecture pushes static chunks to an edge CDN (Cloudflare R2), making delivery infinitely scalable, cacheable, and resilient to client network hiccups.
+    *   *Vs. HLS/MPEG-DASH:* Modern platforms chunk media into segments (like we do) and use an `.m3u8` playlist. Browsers play these chunks natively using the Media Source Extensions (MSE) API. **However, browsers generally do not support FLAC via MSE.** If we used standard HLS, we would be forced to use lossy codecs (AAC/MP3) for everything, sacrificing our primary 24-bit lossless archival and broadcast goal. By building a custom chunk-fetcher, a WASM decoder, and an `AudioWorklet`, we completely bypass the browser's native codec limitations.
+
 ## Why MP3 for the LQ stream?
 
 The Converter process explicitly encodes the lower-quality (LQ) fallback stream as a high-resolution, stereo MP3 (e.g., 320kbps).
