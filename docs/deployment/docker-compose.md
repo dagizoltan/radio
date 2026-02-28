@@ -9,7 +9,7 @@ The topology consists of four distinct services:
 1.  **`minio`**: The local S3-compatible object storage server.
 2.  **`minio-setup`**: A temporary container to configure the `minio` instance.
 3.  **`radio`**: The Rust server application capturing and uploading audio.
-4.  **`client`**: The Deno proxy and frontend serving the web listener interface.
+4.  **`client`**: The Deno frontend serving the web listener interface.
 
 ## Service Details
 
@@ -34,7 +34,7 @@ The topology consists of four distinct services:
 *   **Execution**: Runs a shell one-liner to initialize the bucket and access policies:
     *   Sets an alias for the local `minio` service.
     *   Creates the target bucket (e.g., `radio-stream`) using `--ignore-existing`.
-    *   Sets the anonymous download policy to allow public reads from the client proxy.
+    *   Sets the anonymous download policy to allow public reads directly from the client browser.
 *   **Lifecycle**: Exits immediately upon completion.
 
 ### 3. `radio`
@@ -67,7 +67,7 @@ The topology consists of four distinct services:
 *   **Dependencies**: `depends_on: minio-setup` with the `condition: service_completed_successfully` flag.
 *   **Ports**: Exposes port `3000` (Listener Interface).
 *   **Environment Variables**:
-    *   `R2_PUBLIC_URL`: `http://minio:9000/${R2_BUCKET}`. The Hono server uses this internal Docker network URL to proxy requests to MinIO.
+    *   `R2_PUBLIC_URL`: `http://localhost:9000/${R2_BUCKET}`. The Hono server injects this URL into the frontend so the browser can fetch audio chunks directly from the local MinIO instance (simulating the Cloudflare R2 edge).
     *   `PORT`: `3000`
 
 ## Volumes

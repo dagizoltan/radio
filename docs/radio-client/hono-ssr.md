@@ -1,6 +1,6 @@
 # Hono SSR (main.tsx)
 
-The `main.tsx` file is the entry point for the Deno application. It uses the Hono framework and its JSX engine to provide Server-Side Rendering (SSR) and API proxying.
+The `main.tsx` file is the entry point for the Deno application. It uses the Hono framework and its JSX engine to provide Server-Side Rendering (SSR) and manifest proxying.
 
 ## Server-Side Rendering
 
@@ -16,9 +16,17 @@ When a client makes a `GET /` request, the server executes the following sequenc
 
 **Guarantee:** The SSR shell is complete HTML. A user with JavaScript disabled sees a proper, styled page reflecting the real-time status of the stream, even though playback requires JavaScript.
 
-## Proxy Routes
+## The Edge Streaming Constraints
 
-The server acts as a proxy to the S3 bucket to avoid exposing the bucket directly and to manage CORS and caching headers.
+### Direct S3/R2 Fetch
+
+**CRITICAL CONSTRAINT:** The Deno server must **not proxy audio segments**. Deno Deploy imposes strict egress bandwidth limits. The `radio-player` client-side script fetches the `.flac` and `.mp3` chunks *directly* from the `R2_PUBLIC_URL` (Cloudflare CDN). This bypasses the Deno proxy entirely, transferring the massive bandwidth load of thousands of simultaneous streaming users completely onto Cloudflare R2's free-egress CDN.
+
+*Requirement:* The S3/R2 bucket must have a strict CORS policy enabled (`Access-Control-Allow-Origin` matching the Deno Deploy URL) to allow the browser client to fetch these segments directly.
+
+### Manifest Proxy
+
+The server acts as a proxy for the `manifest.json` file from the S3 bucket to manage caching headers, ensuring clients always see the latest live edge.
 
 ### `GET /manifest.json`
 
@@ -26,23 +34,13 @@ The server acts as a proxy to the S3 bucket to avoid exposing the bucket directl
 *   **Response:** Returns the JSON body.
 *   **Headers:** Includes aggressive `Cache-Control: no-cache, no-store, must-revalidate` headers to ensure clients always get the freshest live edge.
 
-### `GET /segment/:quality/:id`
-
-*   **Action:** Formats the `:quality` (e.g., `hq` or `lq`) and `:id` (e.g., `42`) into the segment key format (`live/${quality}/segment-000042.flac`) and fetches it from `R2_PUBLIC_URL`.
-*   **Response:** Returns the raw bytes as `audio/flac`.
-*   **Headers:** Since segments are immutable once written, it includes aggressive caching headers (e.g., `Cache-Control: public, max-age=31536000, immutable`).
-
 ### `GET /static/:file`
 
 *   **Action:** Serves static assets (`style.css`, `player.js`, `worklet.js`, `flac_decoder.js`, `flac_decoder_bg.wasm`) directly from the local `./static/` directory.
 
-### Proxying Constraints (SSE and Deno Deploy limits)
+### SSE Proxying Constraints
 
-**CRITICAL CONSTRAINT:** The Deno client is deployed to Deno Deploy, which has strict limits on long-lived connections (like WebSockets or Server-Sent Events). The Deno proxy server must strictly rely on standard HTTP polling to fetch the `manifest.json` and segments. It must **never** attempt to proxy the `/events` SSE stream from the Rust server to the public browser client. The SSE stream is exclusively for the local operator monitor UI (`localhost:8080`).
-
-### Potential Optimization: Direct S3 Fetch (CORS)
-
-Currently, the design specifies proxying all `GET /segment/*` traffic through the Deno server. If bandwidth scaling on Deno Deploy becomes an issue, the `radio-player` client-side script can be reconfigured to fetch chunks *directly* from the `R2_PUBLIC_URL`. However, this requires the S3/R2 bucket to have a strict CORS policy enabled (`Access-Control-Allow-Origin` matching the Deno Deploy URL, and allowing `GET` methods). By default, the proxying method avoids CORS issues entirely and is safer for initial deployment.
+The Deno proxy server must strictly rely on standard HTTP polling to fetch the `manifest.json`. It must **never** attempt to proxy the `/events` SSE stream from the Rust server to the public browser client. The SSE stream is exclusively for the local operator monitor UI (`localhost:8080`).
 
 ## Environment Variables
 
