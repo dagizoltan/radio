@@ -69,3 +69,15 @@ The Converter process explicitly encodes the lower-quality (LQ) fallback stream 
 When a listener toggles the Quality Selector (HQ ↔ LQ), the player immediately flushes the `AudioWorklet`.
 
 *   **Rationale:** The `AudioWorklet` queue buffers `f32` PCM arrays. If the user switches qualities, there might be 1-2 seconds of HQ audio left in the queue. Appending LQ-decoded chunks directly behind the pending HQ chunks (especially if a codec introduced slight padding/delay differences) can cause an audible pop or phase alignment jump. By sending a `FLUSH` command via `postMessage`, the worklet clears its queue, ensuring a clean break and a glitch-free transition to the new stream quality.
+
+## Why use a Ring Buffer in the AudioWorklet?
+
+The `AudioWorklet` manages its internal PCM state using a single, pre-allocated `Float32Array` acting as a circular/ring buffer, rather than a standard JavaScript array that `push()`es and `shift()`s incoming chunks.
+
+*   **Rationale:** The V8 JavaScript Garbage Collector (GC) runs periodically to clean up discarded objects. In high-performance, real-time audio, allocating new arrays for every incoming chunk and discarding them after playback causes frequent GC pauses. Even a pause of a few milliseconds on the audio thread results in an audible click or dropout. A pre-allocated ring buffer performs **zero allocations** during playback. Data is written to the ring, and the read pointer advances, ensuring a perfectly smooth, glitch-free audio stream.
+
+## Handling the "Tunnel" Scenario (Reconnection)
+
+If a mobile listener loses their internet connection (e.g., entering a tunnel) for 45 seconds, the `radio-player` fetch loop will fail.
+
+*   **Rationale:** The player must not crash or permanently play 45 seconds behind live when the connection is restored. The fetch loop catches `fetch()` exceptions and enters an incremental backoff retry state. Once reconnected, it polls the `manifest.json`. If it detects the player's `currentIndex` is drastically behind the manifest's `latest` index (e.g., `currentIndex < latest - 3`), it invokes the "Jump-Ahead Logic" to instantly snap back to the live edge, dropping the missed segments and resuming real-time playback seamlessly.

@@ -64,6 +64,7 @@ Receives completed segments and handles S3 uploads and manifest management.
     *   **Resilience:** Uses an exponential backoff retry loop (e.g., 3-5 retries) for the HTTP PUT requests to handle transient network drops.
     *   Key format uses quality folders: e.g., `live/hq/segment-{:06}.flac` and `live/lq/segment-{:06}.mp3`.
     *   Writes `live/manifest.json` containing metadata for both streams: `{"live": true, "latest": index, "segment_s": 10, "updated_at": timestamp, "qualities": ["hq", "lq"]}`.
+    *   **Crucial Caching Instruction:** The `PUT` request for `manifest.json` **must** include the `Cache-Control: no-cache, no-store, must-revalidate` metadata explicitly. This prevents aggressive edge caching by Cloudflare R2 (or an upstream CDN), ensuring the browser receives `304 Not Modified` *only* via the backend ETag mechanism, preventing the stream from "ghosting" or appearing offline while still actively uploading.
 5.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 3 segments per quality, it issues `DELETE` requests for the oldest objects.
 6.  Pushes the new HQ segment into `local_segments` (keeping only the last 3) for the local operator monitor playback.
 7.  Updates `r2_segment`, `r2_last_ms`, and `r2_uploading`. Emits `r2` status events to `sse_tx` during and after the upload.
