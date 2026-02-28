@@ -48,15 +48,29 @@ fi
 
 echo "All integrity checks passed. Proceeding with upload..."
 
-# Upload verified files to cold storage S3 bucket.
-# Replace the following with your actual upload command:
-# aws s3 cp "${RECORDING_DIR}/" s3://your-cold-storage-bucket/recordings/ --recursive --exclude "*.tmp"
+# Upload verified files to cold storage.
+# Choose ONE of the following methods:
+
+# Option A: rclone (recommended — no extra credentials config needed if already set up)
+# rclone copy "${RECORDING_DIR}/" r2-cold:your-cold-bucket/recordings/ --progress
+
+# Option B: AWS CLI v2 pointed at R2
+# aws s3 cp "${RECORDING_DIR}/" s3://your-cold-bucket/recordings/ \
+#   --recursive \
+#   --exclude "*.tmp" \
+#   --endpoint-url "https://<ACCOUNT_ID>.r2.cloudflarestorage.com"
+
+# Both options require credentials for the COLD STORAGE bucket — separate from the
+# live-stream bucket credentials in .env.prod. Configure them independently.
+# See: https://developers.cloudflare.com/r2/examples/aws/aws-cli/
 
 echo "Upload complete. Removing local copies..."
 
 # Only delete locally after confirmed upload exits 0.
 # rm "${RECORDING_DIR}"/*.flac
 ```
+
+> **Credential separation:** The cold-storage bucket should have its own R2 API token with write access. Do not reuse the live-stream bucket token — if it is rotated or revoked, archive uploads should not be affected. Store cold-storage credentials in a separate environment file (e.g., `/etc/radio-server/archive-secrets.env`).
 
 > **`set -euo pipefail` explained:** `set -e` exits immediately if any command fails. `set -u` treats unset variables as errors. `set -o pipefail` ensures a pipeline's exit code is the first non-zero exit code. Together, these prevent silent partial failures in the rotation script.
 

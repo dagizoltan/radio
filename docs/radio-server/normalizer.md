@@ -39,4 +39,4 @@ The `Normalizer` struct exposes a `process` method:
 
 ## Critical Constraints
 
-**CRITICAL CONSTRAINT:** The normalizer never touches the recorded audio. The pipeline task passes a mutable copy of the buffer to the normalizer *after* the raw samples have been encoded and broadcast to the recorder task.
+**CRITICAL CONSTRAINT:** The normalizer never touches the recorded audio. The Converter Task passes a cloned copy of the received PCM buffer to the normalizer. The original PCM was already encoded to FLAC and written to the archive by the Recorder Task before being forwarded to the Converter — the normalizer operates on a fresh clone and never touches the archived data.

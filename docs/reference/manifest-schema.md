@@ -17,10 +17,12 @@
 | Field | Type | Description |
 |---|---|---|
 | `live` | `boolean` | `true` if the server is actively uploading segments. Set to `false` during startup sweep and on graceful shutdown. |
-| `latest` | `number` (safe integer) | 8-digit-compatible integer. The index of the most recently completed and uploaded segment. Always in the range `0` – `99,999,999`, which is safely representable as a JavaScript `number` (well below `Number.MAX_SAFE_INTEGER` of 2⁵³ − 1). No `BigInt` handling is required. Wraps at 100,000,000 via modular arithmetic on the server. |
-| `segment_s` | `u32` | Duration of each segment in seconds. Always `10` in this implementation. Used by the client for latency calculation. |
-| `updated_at` | `u64` | Unix timestamp in milliseconds of the last successful segment upload. Used by the client to detect stale manifests (if `updated_at` is more than `segment_s * 3` seconds in the past, the stream may be down). |
+| `latest` | `number` (safe integer, max 99,999,999) | The index of the most recently completed and uploaded segment. Always in the range `0`–`99,999,999`, well below `Number.MAX_SAFE_INTEGER`. Wraps at 100,000,000 via modular arithmetic on the server. No BigInt handling required. |
+| `segment_s` | `number` (integer, always `10`) | Duration of each segment in seconds. Used by the client for latency calculation and stale-manifest detection. |
+| `updated_at` | `number` (Unix ms timestamp) | Unix timestamp in milliseconds of the last successful segment upload. Safely representable as a JavaScript `number` until the year 2255. Used by the client to detect stale manifests: if `Date.now() - updated_at > segment_s * 3 * 1000`, show a "Stream may be offline" warning. |
 | `qualities` | `string[]` | Available quality levels. Always `["hq", "lq"]`. Used by the player to validate the quality selector options. |
+
+> **All numeric fields** are within JavaScript's safe integer range (`Number.MAX_SAFE_INTEGER` = 2⁵³ − 1 ≈ 9 quadrillion). No `BigInt` handling is required anywhere in the client implementation.
 
 ## Client Usage
 

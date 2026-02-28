@@ -34,7 +34,7 @@ chronyc tracking
 3.  Create a new bucket (e.g., `my-radio-stream`).
 4.  Navigate to **Settings** for the bucket.
 5.  Enable **Public Access** (either via an R2.dev subdomain or by binding a custom domain). Note this URL as the `R2_PUBLIC_URL` for the client.
-5b. **Configure CORS Policy:** In the bucket **Settings** page, navigate to **CORS Policy** and add the following rule, replacing the origin with your actual Deno Deploy URL:
+6.  **Configure CORS Policy:** In the bucket **Settings** page, navigate to **CORS Policy** and add the following rule, replacing the origin with your actual Deno Deploy URL:
 
 ```json
 [
@@ -54,7 +54,7 @@ chronyc tracking
 7.  Navigate to **R2 API Tokens** and create a new token.
     *   Permissions: **Object Read & Write**.
     *   Specific Bucket: Select your new bucket.
-7.  Copy the **Access Key ID**, **Secret Access Key**, and the **S3 API URL** (the endpoint URL).
+8.  Copy the **Access Key ID**, **Secret Access Key**, and the **S3 API URL** (the endpoint URL).
 
 ## Step 2: Configure Server for Production
 

@@ -9,12 +9,13 @@ The [Capture Crate](../radio-server/capture.md) interacts directly with the Linu
 *   **Rationale:** Eliminating C dependencies simplifies the build process, cross-compilation, and runtime environment. It removes an entire class of potential linking issues and segfaults. By using `rustix` for safe, zero-cost syscall wrappers, we achieve direct kernel communication in pure Rust, ensuring memory safety and deterministic behavior.
 *   **Constraint:** No C bindings in capture. The capture crate must not link against `libasound` or any C audio library.
 
-## Why two broadcast channels?
+## Why separate channels for raw and normalized audio?
 
-The server pipeline uses two separate `tokio::sync::broadcast` channels: one for raw audio and one for normalized audio.
+The server pipeline uses two dedicated `tokio::sync::mpsc` channels for audio data — one from the Recorder to the Converter, one from the Converter to the Uploader — plus a single `tokio::sync::broadcast` channel used exclusively for the SSE event bus.
 
-*   **Rationale:** The local archive must be a pristine, unprocessed bit-for-bit copy of the analog capture for archival purposes. The stream sent to listeners needs to be normalized (gain-ridden and limited) to provide a consistent listening experience without digital clipping. By splitting the pipeline immediately after the raw encode, we guarantee the [Normalizer](../radio-server/normalizer.md) never mutates the archived audio.
-*   **Constraint:** Two broadcast channels, not one. Raw frames go to the recorder. Normalized frames go to the R2 uploader. The normalizer never touches the recorded audio.
+- **Rationale:** The local archive must be a pristine, unprocessed bit-for-bit copy of the analog capture. The stream sent to listeners must be normalized for consistent loudness. By using separate channels with the Recorder as the sole ALSA reader, we guarantee the Normalizer never touches the archived audio. The Recorder encodes raw PCM to FLAC for the archive independently, then sends the same raw PCM to the Converter. The Converter clones it before normalising, so the two paths never share mutable state.
+- **Why `mpsc` and not `broadcast` for audio:** `broadcast` drops frames when any receiver lags, which is acceptable for UI events but not for audio data. `mpsc` with a bounded capacity provides back-pressure: if the Converter falls behind, the Recorder's `send()` returns an error immediately rather than silently dropping audio from the archive.
+- **Constraint:** The two audio `mpsc` channels carry only audio data. The `broadcast` channel (`sse_tx`) carries only JSON event strings for the monitor UI. Never use `broadcast` for audio data.
 
 ## Why verbatim FLAC subframes?
 

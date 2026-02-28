@@ -41,6 +41,8 @@ HashedPayload
 *   **SignedHeaders:** A semicolon-separated list of the header names used in CanonicalHeaders (e.g., `content-type;host;x-amz-content-sha256;x-amz-date`).
 *   **HashedPayload:** The SHA256 hash of the request body (the FLAC segment bytes), hex-encoded.
 
+**Critical implementation note:** The value of the `x-amz-content-sha256` request header must be set to the **same hex-encoded SHA256 string** as `HashedPayload` in the canonical request. Compute the hash once, store it in a variable, and use it in both places. If they differ — even by case — the signature will not match and R2 will return `403 SignatureDoesNotMatch`.
+
 ### 3. String to Sign
 
 The string to sign incorporates the canonical request hash and the signing context.

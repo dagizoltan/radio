@@ -38,7 +38,26 @@ The server-side manifest fetch at `GET /` may fail if R2 is temporarily unreacha
 
 **Client recovery:** The `<radio-player>` Web Component initialises in polling-only mode. Its fetch loop retries the manifest (directly from R2 via `data-r2-url`) on a `segment_s`-second interval. When the manifest becomes available and `live: true`, the component automatically enables the play button and updates the live badge — without requiring a page reload.
 
-**Implementation note:** The SSR manifest fetch should have a short timeout (e.g., 3 seconds) to avoid holding the page render open during an R2 outage. Use `AbortSignal.timeout(3000)` or equivalent in the Deno `fetch()` call.
+**Implementation note:** The SSR manifest fetch must have a short timeout to avoid blocking page render during an R2 outage. Use `AbortSignal.timeout(3000)` in the Deno `fetch()` call. `AbortSignal.timeout()` is available in Deno 1.28+ and is supported by the pinned Docker image (`denoland/deno:2.0.0`). Always wrap the fetch in try/catch — do not let a timeout `AbortError` propagate as an unhandled rejection:
+
+```typescript
+let manifest: Manifest | null = null;
+try {
+  const res = await fetch(
+    `${R2_PUBLIC_URL}/live/manifest.json`,
+    { signal: AbortSignal.timeout(3000) }
+  );
+  if (res.ok) manifest = await res.json() as Manifest;
+} catch (_err) {
+  // Timeout, network error, or JSON parse failure — render offline fallback
+}
+
+const live = manifest?.live ?? false;
+const latest = manifest?.latest ?? 0;
+const duration = manifest?.segment_s ?? 10;
+```
+
+On any error path, the page renders with `data-live="false"` and the client recovers by polling R2 directly.
 
 ### `GET /static/:file`
 

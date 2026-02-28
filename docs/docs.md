@@ -137,7 +137,7 @@ radio-stream/
 The system design enforces several strict rules outlined below. Violating these constraints breaks the core archival and performance guarantees of the system.
 
 1.  **No C bindings in capture**: The [Capture Crate](radio-server/capture.md) must not link against `libasound`. All interaction is via raw kernel ioctls.
-2.  **Two broadcast channels, not one**: The [Server Pipeline](radio-server/server.md) must use separate channels for raw and normalized frames. The [Normalizer](radio-server/normalizer.md) must never touch the local recorded audio.
+2.  **Separate channels for audio and control**: The Server Pipeline uses two bounded `tokio::sync::mpsc` channels for audio data (raw PCM from Recorder to Converter, and assembled segments from Converter to Uploader). A single `tokio::sync::broadcast` channel is used exclusively for the SSE event bus. The Normalizer must never touch the recorded audio.
 3.  **Rolling window, not TTL**: R2 does not have reliable instant TTL. The [R2 Uploader Task](radio-server/server.md) maintains exactly 3 segments, actively deleting older keys.
 4.  **Segments are complete FLAC files**: Every segment uploaded to R2 must contain the full FLAC stream header and be playable as a standalone file, as described in the [Encoder Spec](radio-server/encoder.md).
 5.  **WASM decoder is minimal**: The [WASM Decoder](radio-client/wasm-decoder.md) only parses verbatim subframes matching our specific block size/rate encoding (24-bit). It does not implement full FLAC.

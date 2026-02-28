@@ -33,7 +33,7 @@ Handles direct hardware capture and local uncompressed archiving.
     *   Computes the peak absolute sample value for the left and right channels for the UI. Updates `vu_left` and `vu_right`.
     *   Encodes the raw `&[i32]` buffer into raw verbatim HQ 24-bit FLAC frames.
     *   Writes the frames directly to the staging archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
-    *   Sends the raw frames via a bounded `tokio::sync::mpsc` channel (capacity 16) to the converter process.
+    *   Sends the raw PCM period as `Arc<Vec<i32>>` via a bounded `tokio::sync::mpsc` channel (capacity 16) to the Converter Task. The FLAC encoding above is written to the archive only — the Converter receives raw PCM directly and never sees the FLAC-encoded bytes.
     *   Emits VU levels to `sse_tx`.
 6.  **Archiving:** Periodically (e.g., every 60 minutes) or on graceful shutdown, it flushes the current staging file, closes the handle, and asynchronously moves it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue.
 
@@ -43,8 +43,8 @@ Consumes the raw stream, normalizes it, and encodes it into multiple qualities (
 
 1.  Receives from the bounded `mpsc` channel. The `broadcast` channel is retained only for control/status messages (SSE events, shutdown signals).
 2.  Initializes the `Normalizer`.
-3.  Initializes the audio encoders: one `FlacEncoder` for the normalized HQ stream (24-bit), and One Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`) with an `ogg::PacketWriter` for container framing. Before encoding, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets; the Ogg writer accumulates them into pages. Each 10-second segment is assembled as a complete, self-contained Ogg Opus stream (includes the two header pages prepended).
-4.  Loops, receiving raw FLAC frames and extracting the interleaved `i32` buffer.
+3.  Initializes the audio encoders: one `FlacEncoder` for the normalized HQ stream (24-bit), and one Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`) with an `ogg::PacketWriter` for container framing. Before encoding, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets; the Ogg writer accumulates them into pages. Each 10-second segment is assembled as a complete, self-contained Ogg Opus stream (includes the two header pages prepended).
+4.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames. No decoding step is required — the PCM arrives ready for normalisation.
 5.  Copies the raw buffer to a new mutable buffer and calls `normalizer.process(&mut buffer)`.
 6.  Encodes the normalized buffer simultaneously into the respective HQ (FLAC) and LQ (Opus) streams.
 7.  Emits the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
@@ -60,11 +60,13 @@ Receives completed segments and handles S3 uploads and manifest management.
 
 1.  **Startup Cleanup:** Before processing any new segments, performs a `LIST` and `DELETE` operation on the bucket prefixes (`live/hq/` and `live/lq/`) to remove any orphaned segments from a previous crashed session.
     *   **Race Condition Mitigation:** Before issuing any `DELETE` requests during the startup sweep, write `manifest.json` with `"live": false`. This ensures any active listeners enter their backoff/retry state before their buffered segments are deleted. After the sweep completes and the first new segment is uploaded, the manifest is updated to `"live": true`. The recommended implementation sequence:
-        1. Write `manifest.json`: `{"live": false, "latest": 0, "segment_s": 10}`.
-        2. `LIST` `live/hq/` and `live/lq/`.
-        3. `DELETE` all found segment keys.
-        4. Resume from the highest found index (or 0 if none found).
-        5. After first successful upload: write `manifest.json` with `"live": true`.
+        1. LIST `live/hq/` and `live/lq/` to find all existing segment keys and the highest existing index.
+        2. Write `manifest.json` with `"live": false` and `latest` set to the highest found index (or `0` if none found). Example: `{"live": false, "latest": 99, "segment_s": 10, "updated_at": <now>}`. Using the previously-known index prevents active clients from hard-resetting to segment 0 when they read the offline manifest.
+        3. DELETE all found segment keys.
+        4. Resume uploading from `(highest_found_index + 1) % 100_000_000` (or `0` if none found).
+        5. After the first successful segment upload: write `manifest.json` with `"live": true` and the new `latest` index.
+
+**Why LIST before writing the offline manifest:** Writing `"latest": 0` in the offline manifest causes all connected clients to reset their `currentIndex` to 0. When `live: true` is published with the real index (e.g., 1,042), every client triggers the jump-ahead logic and makes a burst of manifest polls simultaneously. Using the last known index avoids this thundering-herd effect on reconnect.
 2.  Receives completed HQ and LQ segment files from the Converter Task via a bounded `tokio::sync::mpsc` channel (capacity 3). The Uploader is the sole receiver. If the channel is full due to upload back-pressure, the Converter's send returns an error and logs `WARN: uploader lagging`.
 3.  Loops, receiving assembled segment files.
 4.  **Upload:**
@@ -90,7 +92,7 @@ Serves the local monitor UI on `127.0.0.1:8080` using `axum`.
 
 ## Critical Constraints
 
-**CRITICAL CONSTRAINT:** Two broadcast channels, not one. Raw frames go to the recorder. Normalized frames go to the R2 uploader. The local archive must be completely unprocessed — the normalizer must never touch the recorded audio.
+**CRITICAL CONSTRAINT:** Two dedicated audio `mpsc` channels, not broadcast. Raw PCM flows Recorder→Converter via `mpsc(16)`. Assembled segments flow Converter→Uploader via `mpsc(3)`. The `broadcast` channel carries only SSE event bus messages. The local archive must be completely unprocessed — the normalizer must never touch the recorded audio.
 
 **CRITICAL CONSTRAINT:** Rolling window, not TTL. R2 has no native TTL. The uploader maintains a VecDeque of uploaded keys and deletes the oldest immediately when the window exceeds 3 segments. At any moment R2 holds exactly 3 segments and one manifest.
 

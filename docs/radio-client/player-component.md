@@ -53,6 +53,39 @@ stopPlayback() {
 }
 ```
 
+**Implementation note — async `connectedCallback`:** Custom element lifecycle callbacks must be synchronous — browsers do not `await` an async `connectedCallback`. If `connectedCallback` is declared `async`, the function returns a `Promise` immediately and the `await` inside runs in the background. This means code after the lock check (rendering, event binding) will execute *before* the lock resolves if written naively. Structure the implementation so the UI renders synchronously in `connectedCallback`, with the play button initially disabled, and enable it only after the async lock resolves:
+
+```javascript
+connectedCallback() {
+  this._renderUI();          // synchronous — renders UI, play button disabled
+  this._acquireLock();       // async — enables play button only after lock acquired
+}
+
+async _acquireLock() {
+  if (!("locks" in navigator)) {
+    this._enablePlayButton();
+    return;
+  }
+  const acquired = await new Promise(resolve => {
+    navigator.locks.request(
+      "radio-player-singleton",
+      { ifAvailable: true, signal: this._lockController.signal },
+      async (lock) => {
+        if (!lock) { resolve(false); return; }
+        resolve(true);
+        await new Promise(r => (this._releaseLock = r));
+      }
+    ).catch(() => resolve(false));
+  });
+
+  if (!acquired) {
+    this._showMessage("Stream is already playing in another tab.");
+    return; // play button remains disabled
+  }
+  this._enablePlayButton();
+}
+```
+
 **Fallback:** Check `"locks" in navigator` before using the API. On unsupported browsers, skip the lock and log a console warning. Multi-tab is then silently permitted on those browsers.
 
 **Tab close / navigation:** The browser automatically releases the lock when the tab is closed or navigated away, so the lock is never orphaned.
