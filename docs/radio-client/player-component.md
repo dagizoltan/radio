@@ -31,7 +31,8 @@ When the user clicks the "Play" button, the following sequence occurs:
     await init();
     const decoder = new FlacDecoder();
     ```
-7.  **Fetch Loop:** Start the main fetch loop and the waveform animation loop (`requestAnimationFrame`).
+7.  **Fetch Loop (`setInterval` / Web Worker):** Start the main fetch loop. Crucially, the fetch polling loop must **not** rely on `requestAnimationFrame` or `setTimeout` running on the main thread, because browsers heavily throttle (or pause entirely) background tabs. To keep audio playing smoothly while the listener browses other tabs, the fetch loop should be driven by a `setInterval` running in a dedicated Web Worker, which passes fetch commands or chunk events back to the main thread `MessagePort`.
+8.  **Waveform Animation Loop:** The visual waveform updates independently using `requestAnimationFrame`. When the tab is backgrounded, it correctly pauses rendering to save battery, but the separate Web Worker continues fetching audio chunks.
 
 ## Fetch Loop Algorithm
 

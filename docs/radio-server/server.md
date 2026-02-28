@@ -48,8 +48,10 @@ Consumes the raw stream, normalizes it, and encodes it into multiple qualities (
 5.  Copies the raw buffer to a new mutable buffer and calls `normalizer.process(&mut buffer)`.
 6.  Encodes the normalized buffer simultaneously into the respective HQ (FLAC) and LQ (MP3) streams.
 7.  Emits the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
-8.  **Segment Assembly:** Accumulates the encoded frames for both qualities. When the target 10-second duration is reached (based on PCM sample count equivalent, `44100 * 2 channels * 4 bytes * 10s = 3,528,000` bytes):
-    *   Assembles complete, standalone FLAC files in memory by prepending the respective stream headers.
+8.  **Segment Assembly:** Accumulates the encoded frames for both qualities.
+    *   *Optimization Strategy:* To prevent constant vector reallocations as frames accumulate, the accumulator `Vec<u8>` for the 10-second segment must be pre-allocated with `Vec::with_capacity()`. A 10-second 24-bit verbatim FLAC segment will reliably be ~`44100 * 3 bytes * 2 channels * 10s = 2,646,000` bytes, plus the header. Pre-allocating this exact size prevents the OS from thrashing memory reallocations during the real-time capture loop.
+    *   When the target 10-second duration is reached (based on PCM sample count equivalent, `44100 * 2 channels * 4 bytes * 10s = 3,528,000` bytes in the raw `i32` buffer):
+    *   Assembles complete, standalone files in memory by prepending the respective stream headers to the filled accumulator.
     *   Broadcasts the completed HQ and LQ segment files (as `Bytes`) over dedicated segment channels to the Cloud Uploader.
 
 ### Process 3: Cloud Uploader Task
