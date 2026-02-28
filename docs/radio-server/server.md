@@ -27,15 +27,15 @@ Handles direct hardware capture and local uncompressed archiving.
 
 1.  Opens the ALSA capture device using the [Capture Crate](capture.md).
 2.  Initializes a high-quality (HQ) `FlacEncoder` instance for raw encoding.
-3.  Creates a new, timestamped file in `./recordings/`.
+3.  Creates a new, timestamped staging file in a fast, local container directory (e.g., `/tmp/` or a `tmpfs` mount) to prevent the capture loop from blocking on slow host-mounted filesystems (especially relevant if a developer runs this on Docker Desktop for Mac/Windows).
 4.  Enters an asynchronous loop, awaiting periods from the capture device.
 5.  **For each period (4096 frames):**
     *   Computes the peak absolute sample value for the left and right channels for the UI. Updates `vu_left` and `vu_right`.
     *   Encodes the raw `&[i32]` buffer into raw verbatim HQ 24-bit FLAC frames.
-    *   Writes the frames directly to the local archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
+    *   Writes the frames directly to the staging archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
     *   Broadcasts the raw frames via the raw `tokio::sync::broadcast` channel to the converter process.
     *   Emits VU levels to `sse_tx`.
-6.  On shutdown, it flushes the file and logs the final size.
+6.  **Archiving:** Periodically (e.g., every 60 minutes) or on graceful shutdown, it flushes the current staging file, closes the handle, and asynchronously moves it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue.
 
 ### Process 2: Converter Task
 
