@@ -40,6 +40,10 @@ The server acts as a proxy to the S3 bucket to avoid exposing the bucket directl
 
 **CRITICAL CONSTRAINT:** The Deno client is deployed to Deno Deploy, which has strict limits on long-lived connections (like WebSockets or Server-Sent Events). The Deno proxy server must strictly rely on standard HTTP polling to fetch the `manifest.json` and segments. It must **never** attempt to proxy the `/events` SSE stream from the Rust server to the public browser client. The SSE stream is exclusively for the local operator monitor UI (`localhost:8080`).
 
+### Potential Optimization: Direct S3 Fetch (CORS)
+
+Currently, the design specifies proxying all `GET /segment/*` traffic through the Deno server. If bandwidth scaling on Deno Deploy becomes an issue, the `radio-player` client-side script can be reconfigured to fetch chunks *directly* from the `R2_PUBLIC_URL`. However, this requires the S3/R2 bucket to have a strict CORS policy enabled (`Access-Control-Allow-Origin` matching the Deno Deploy URL, and allowing `GET` methods). By default, the proxying method avoids CORS issues entirely and is safer for initial deployment.
+
 ## Environment Variables
 
 The server relies on two critical environment variables:

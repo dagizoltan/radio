@@ -23,9 +23,11 @@ The server is organized as a Cargo workspace containing four crates:
   +--> [crates/normalizer]
 ```
 
-## Task Orchestration
+## Task Orchestration & Error Handling
 
-The main binary runs three distinct primary processes (logically separated, though orchestrated concurrently in Tokio via `tokio::select!` in `main`):
+The main binary runs three distinct primary processes (logically separated, though orchestrated concurrently in Tokio via `tokio::select!` in `main`).
+
+**Error Handling Strategy:** All processes must employ a robust error-handling strategy (e.g., using `anyhow` for application-level errors or a custom `thiserror` enum for library crates). A transient failure (such as an `EWOULDBLOCK` from ALSA or a temporary network drop in the S3 uploader) must be logged and retried. A fatal failure in one task must signal the cancellation token to gracefully tear down the other tasks via the `tokio::select!` macro, flushing buffers and closing file handles before the process exits.
 
 1.  **Process 1: HQ Recorder Task**: Reads directly from the ALSA capture device, encodes raw high-quality (HQ) FLAC verbatim frames, writes them to the local archive disk, and broadcasts the raw frames to the converter.
 2.  **Process 2: Converter Task**: Receives the raw HQ frames, normalizes the signal, and encodes it into multiple qualities (e.g., normalized HQ, and a down-sampled/down-bitrate LQ version). It assembles these into complete 10-second segments and broadcasts them.

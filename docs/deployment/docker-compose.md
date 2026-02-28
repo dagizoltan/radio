@@ -61,7 +61,8 @@ The topology consists of four distinct services:
 ### 4. `client`
 
 *   **Build**: Built from `radio-client/Dockerfile`.
-    *   Uses `denoland/deno:2.0.0`.
+    *   Uses `denoland/deno:2.0.0` or a multi-stage Rust+Deno image.
+    *   *Build-time Requirement:* The Dockerfile **must** install the Rust toolchain and `wasm-pack` to compile the `decoder` crate (`wasm-pack build --target web`) before the Deno server is started, ensuring the `.js` and `.wasm` files are available in `static/`.
     *   Pre-caches dependencies with `deno cache main.tsx`.
 *   **Dependencies**: `depends_on: minio-setup` with the `condition: service_completed_successfully` flag.
 *   **Ports**: Exposes port `3000` (Listener Interface).
