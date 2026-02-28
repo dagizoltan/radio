@@ -65,7 +65,7 @@ Receives completed segments and handles S3 uploads and manifest management.
         3. `DELETE` all found segment keys.
         4. Resume from the highest found index (or 0 if none found).
         5. After first successful upload: write `manifest.json` with `"live": true`.
-2.  Subscribes to the completed HQ and LQ segment broadcast channels.
+2.  Receives completed HQ and LQ segment files from the Converter Task via a bounded `tokio::sync::mpsc` channel (capacity 3). The Uploader is the sole receiver. If the channel is full due to upload back-pressure, the Converter's send returns an error and logs `WARN: uploader lagging`.
 3.  Loops, receiving assembled segment files.
 4.  **Upload:**
     *   Uploads the segments to S3 using raw HTTP with [AWS Signature V4](aws-sig-v4.md).
@@ -108,6 +108,8 @@ let shutdown = async {
     }
 };
 ```
+
+**SIGTERM on macOS / Linux containers:** `tokio::signal::unix` is Linux/macOS only. Do not use it in cross-platform code paths. Since this binary runs exclusively on Ubuntu Linux inside Docker, `unix` signals are appropriate. The shutdown handler must be registered before the `tokio::select!` main loop begins — not inside a task — to ensure it is always active regardless of task state.
 
 When the shutdown signal fires, the cancellation token is cancelled. Each task must respect the token and complete its shutdown sequence:
 

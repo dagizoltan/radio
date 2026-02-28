@@ -112,6 +112,7 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   A `"FLUSH"` message is sent to the `AudioWorklet` via `postMessage` to instantly clear any buffered PCM data. This prevents an audible pitch-shift or pop when the new codec chunks arrive.
     *   The `currentQuality` state updates.
     *   The fetch loop immediately attempts to fetch the *same* `currentIndex` using the new quality path (`hq` FLAC or `lq` Opus).
+    **Audio rewind on quality switch:** Because the fetch loop re-fetches the same `currentIndex` from byte 0 in the new codec, the listener may hear up to 10 seconds of audio repeated after a quality switch (the portion of the current segment already played). This is intentional — it produces a clean decode boundary with no codec state bleed. The alternative (fetching the *next* segment index) would produce a forward skip of up to 10 seconds, which is more disorienting. Operators should be aware that the LQ ↔ HQ toggle has an audible rewind artefact of up to one full segment duration.
 6.  **Iteration:** When `reader.read()` returns `done: true` normally, increment the `currentIndex`.
 7.  **Latency Display:** Calculate and update the UI with the estimated latency: `(latest - currentIndex) * segment_s` seconds behind live.
 ## AudioContext Lifecycle and Background Tab Handling
@@ -143,8 +144,9 @@ document.addEventListener("visibilitychange", async () => {
     if (audioCtx.state === "suspended") await audioCtx.resume();
 
     // If ring buffer has accumulated > 1.5 segments of stale audio, flush and re-anchor
-    const bufferDepth = workletNode.port.postMessage({ type: "QUERY_DEPTH" });
-    // Response handled asynchronously via port.onmessage
+    // NOTE: postMessage returns undefined. Do NOT try to use a return value here.
+    // The DEPTH_RESPONSE message arrives asynchronously in workletNode.port.onmessage.
+    workletNode.port.postMessage({ type: "QUERY_DEPTH" });
   }
 });
 

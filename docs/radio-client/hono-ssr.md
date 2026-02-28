@@ -25,6 +25,21 @@ When a client makes a `GET /` request, the server executes the following sequenc
 *Requirement:* The S3/R2 bucket must have a strict CORS policy enabled (`Access-Control-Allow-Origin` matching the Deno Deploy URL) to allow the browser client to fetch these segments directly.
 
 **No manifest proxy.** The Deno server does not proxy `manifest.json`. The `<radio-player>` Web Component fetches it directly from `${data-r2-url}/live/manifest.json`. Removing this proxy route eliminates the Deno server from the media-critical path.
+
+### Manifest Fetch Failure Handling (SSR)
+
+The server-side manifest fetch at `GET /` may fail if R2 is temporarily unreachable, the server has just started and no segments have been uploaded yet, or the bucket is misconfigured. The SSR must handle this gracefully rather than returning a 500 error.
+
+**Behaviour on fetch failure:**
+- Catch the error (network failure, non-200 response, JSON parse error).
+- Render the HTML shell with fallback data attributes: `data-live="false"`, `data-latest="0"`, `data-duration="10"`, `data-r2-url="${R2_PUBLIC_URL}"`.
+- The live status badge renders as grey/offline.
+- The play button renders as disabled with the label "Stream Offline".
+
+**Client recovery:** The `<radio-player>` Web Component initialises in polling-only mode. Its fetch loop retries the manifest (directly from R2 via `data-r2-url`) on a `segment_s`-second interval. When the manifest becomes available and `live: true`, the component automatically enables the play button and updates the live badge — without requiring a page reload.
+
+**Implementation note:** The SSR manifest fetch should have a short timeout (e.g., 3 seconds) to avoid holding the page render open during an R2 outage. Use `AbortSignal.timeout(3000)` or equivalent in the Deno `fetch()` call.
+
 ### `GET /static/:file`
 
 *   **Action:** Serves static assets (`style.css`, `player.js`, `worklet.js`, `flac_decoder.js`, `flac_decoder_bg.wasm`, `opus_decoder.js`, `opus_decoder_bg.wasm`) directly from the local `./static/` directory.
@@ -38,6 +53,6 @@ The Deno server must strictly rely on standard HTTP polling to fetch the `manife
 The server relies on two critical environment variables:
 
 *   **`PORT`**: The HTTP port to bind to. Read from `Deno.env.get("PORT")`. Defaults to `3000`. It binds to `0.0.0.0` for Docker compatibility.
-*   **`R2_PUBLIC_URL`**: The base URL for all S3 fetches. Read from `Deno.env.get("R2_PUBLIC_URL")`.
-    *   In local development, this is `http://minio:9000/radio-stream`.
-    *   In production, this is the public-facing R2 URL or a Cloudflare Worker URL.
+*   **`R2_PUBLIC_URL`**: Used for a single server-side manifest fetch at SSR render time to populate the live-status badge and initial `data-*` attributes on `<radio-player>`. It is also injected into the HTML as the `data-r2-url` attribute, after which the browser takes over all manifest polling and segment fetching directly against R2. The Deno server makes no further use of this URL after the initial render — it does not proxy any ongoing traffic.
+    *   Local dev: `http://minio:9000/radio-stream`
+    *   Production: the Cloudflare R2 public URL (e.g., `https://pub-xxxxxx.r2.dev/my-radio-stream`)

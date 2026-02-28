@@ -86,7 +86,9 @@ radio-stream/
     ├── islands/
     │   ├── player.ts
     │   └── worklet.ts
-    ├── decoder/            (Rust WASM crate)
+    ├── decoder/
+    │   ├── flac/           (Rust WASM FLAC decoder crate)
+    │   └── opus/           (Rust WASM Opus decoder crate)
     ├── static/
     └── Dockerfile
 ```

@@ -14,7 +14,7 @@ The first stage targets a consistent -14 LUFS level by adjusting the overall gai
     *   **Attack:** ~500ms time constant. This reacts relatively quickly when the signal gets louder (preventing prolonged clipping).
     *   **Release:** ~2000ms time constant. This reacts slowly when the signal gets quieter (preventing "pumping" artifacts during momentary lulls).
 6.  **Application:** The current smoothed gain is applied multiplicatively to every sample in the block.
-7.  **Warm-up State:** To prevent a massive +6dB gain jump when the process starts (because the 3-second RMS history window is initially empty/silence), the normalizer bypasses gain application (stays at 0dB adjustment) for the first 3 seconds until the window is fully populated with actual audio data.
+7.  **Warm-up State:** To prevent a massive +6dB gain jump when the process starts (because the 3-second RMS history window is initially empty/silence), the normalizer bypasses gain application (stays at 0dB adjustment) for the first **30 RMS blocks** — equivalent to 3 seconds at any configured sample rate (30 × 100ms). Using block count rather than a sample-count threshold makes the warm-up duration sample-rate-agnostic. Implementations must not hardcode a sample count (e.g., `4410 * 30` or `4800 * 30`) as the warm-up threshold, as this silently breaks when the sample rate changes.
 
 This stage preserves the original dynamics (transients) of the performance while gently riding the overall volume level to ensure consistency across different records or mixer settings.
 

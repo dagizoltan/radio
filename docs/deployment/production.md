@@ -34,7 +34,24 @@ chronyc tracking
 3.  Create a new bucket (e.g., `my-radio-stream`).
 4.  Navigate to **Settings** for the bucket.
 5.  Enable **Public Access** (either via an R2.dev subdomain or by binding a custom domain). Note this URL as the `R2_PUBLIC_URL` for the client.
-6.  Navigate to **R2 API Tokens** and create a new token.
+5b. **Configure CORS Policy:** In the bucket **Settings** page, navigate to **CORS Policy** and add the following rule, replacing the origin with your actual Deno Deploy URL:
+
+```json
+[
+  {
+    "AllowedOrigins": ["https://your-project.deno.dev"],
+    "AllowedMethods": ["GET"],
+    "AllowedHeaders": ["*"],
+    "ExposeHeaders": ["ETag"],
+    "MaxAgeSeconds": 3600
+  }
+]
+```
+
+**Why this is required:** The browser `<radio-player>` Web Component fetches both `manifest.json` and audio segments directly from R2 (cross-origin). Without this policy, all segment and manifest fetches are blocked by the browser's CORS enforcement. The `ExposeHeaders: ["ETag"]` entry is essential for the `If-None-Match` manifest polling optimisation to function correctly.
+
+**Note:** This is configured via the Cloudflare dashboard UI or the Cloudflare API — it cannot be set via the S3 API or `aws s3api put-bucket-cors`. The format above matches the Cloudflare R2 dashboard's CORS JSON input.
+7.  Navigate to **R2 API Tokens** and create a new token.
     *   Permissions: **Object Read & Write**.
     *   Specific Bucket: Select your new bucket.
 7.  Copy the **Access Key ID**, **Secret Access Key**, and the **S3 API URL** (the endpoint URL).
@@ -83,10 +100,14 @@ The ThinkPad has a real-world upload bandwidth of approximately **10.68 Mbps**.
 
 ### Storage Estimation
 
-The system maintains a rolling window of exactly 3 segments on R2 at any given time.
+The system maintains a rolling window of exactly 3 segments per quality stream on R2 at any given time.
 
-*   **Steady-State Size:** 3 segments * ~1.5 MB (FLAC compressed) + 1 manifest file ≈ **4.5 MB total storage**.
-*   This predictable, bounded footprint ensures costs on Cloudflare R2 remain minimal.
+- **HQ segments:** 3 × ~2.88 MB = **~8.64 MB**
+- **LQ segments:** 3 × ~160 KB (average, VBR range 100–220 KB) = **~0.48 MB average**
+- **Manifest:** negligible (~200 bytes)
+- **Total steady-state: ~9.12 MB**
+
+This is a predictable, bounded footprint ensuring costs on Cloudflare R2 remain minimal. The previous estimate of ~4.5 MB was based on compressed FLAC for HQ; the correct figure uses verbatim FLAC at ~2.88 MB per segment.
 ## Secret Management
 
 The `.env.prod` file contains `R2_ACCESS_KEY` and `R2_SECRET_KEY` in plaintext. These credentials grant write access to the R2 bucket. Observe the following:
