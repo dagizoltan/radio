@@ -114,16 +114,16 @@ The system maintains a rolling window of exactly 10 segments per quality stream 
 This is a predictable, bounded footprint ensuring costs on Cloudflare R2 remain minimal. The previous estimate of ~4.5 MB was based on compressed FLAC for HQ; the correct figure uses verbatim FLAC at ~2.88 MB per segment.
 ## Secret Management
 
-The `.env.prod` file contains `R2_ACCESS_KEY` and `R2_SECRET_KEY` in plaintext. These credentials grant write access to the R2 bucket. Observe the following:
+The `.env.prod` file contains `R2_ACCESS_KEY` and `R2_SECRET_KEY` in plaintext. These credentials grant write access to the R2 bucket. Observe the following robust secret management practices for production deployments:
 
 - `.env.prod` **must** be listed in `.gitignore`. Verify with `git check-ignore -v .env.prod` before committing.
-- On the ThinkPad, set file permissions to `600` (owner read-only): `chmod 600 radio-server/.env.prod`.
-- Preferred production approach: store credentials in a root-owned `EnvironmentFile` (e.g., `/etc/radio-server/secrets.env`, mode `600`) and reference it from the systemd unit:
+- **Do not** leave the `.env.prod` file with `chmod 600` inside the project directory, as this poses an operational security risk.
+- **Required production approach:** Store secrets securely using systemd's `LoadCredential` directive or a dedicated secrets manager. At a minimum, store credentials in a root-owned file outside the repository (e.g., `/etc/credstore/radio-secrets`, mode `600`) and reference it from the systemd unit:
   ```ini
   [Service]
-  EnvironmentFile=/etc/radio-server/secrets.env
+  EnvironmentFile=/etc/credstore/radio-secrets
   ```
-  This keeps secrets outside the repository directory entirely.
+  This keeps all plaintext credentials securely isolated from the deployment directory.
 - Rotate the R2 API token every 90 days. Cloudflare R2 API tokens can be revoked and reissued without changing the bucket; only the `R2_ACCESS_KEY` and `R2_SECRET_KEY` values in the environment need updating.
 - Never log the secret key. The AWS Sig V4 implementation must not include `R2_SECRET_KEY` in any `tracing` span or log output, even at `TRACE` level.
 

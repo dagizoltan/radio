@@ -2,6 +2,8 @@
 
 The `radio-server` uploads segments to Cloudflare R2 (or MinIO in development) using a custom, from-scratch implementation of AWS Signature Version 4. It does not use the official AWS SDK or external S3 crates.
 
+**Recommendation:** While this custom implementation exists to reduce dependencies, manually managing clock skew and cryptographic signing is complex and fragile. For long-term production stability, consider refactoring the Uploader Task to use the official `aws-sdk-s3` (or the `aws-sigv4` crate). If the custom implementation must remain, it must be thoroughly tested against simulated clock-drift scenarios.
+
 ## Crates Used
 
 The implementation relies solely on cryptographic primitives:
