@@ -44,6 +44,10 @@ The `FlacDecoder` struct maintains state across chunk pushes:
 *   Parsed stream parameters (sample rate, channels, bps).
 *   A `header_parsed` boolean flag.
 
+**Per-segment lifecycle:** A new `FlacDecoder` instance **must** be created for each segment. Call `decoder.free()` to release WASM memory before creating the new instance. Rationale: each segment begins with a full FLAC stream header (`fLaC` + `STREAMINFO`), so the decoder's `header_parsed` flag must be reset to `false` and the accumulator buffer must be empty. Reusing a `FlacDecoder` across segments will cause the second segment's stream header to be misinterpreted as frame data.
+
+Contrast with Opus: the `OpusDecoder` is also recreated per segment (already documented). Both decoders follow the same per-segment lifecycle.
+
 ## push() Method API
 
 The core JavaScript API is `push(bytes: &[u8]) -> Vec<f32>`.

@@ -29,7 +29,6 @@ Displays real-time audio levels for the Left and Right channels.
 *   Visual bars animate using CSS transforms or canvas rendering.
 *   Color-coded zones: Green (normal), Yellow (approaching 0 dBFS), Red (clipping).
 *   Includes a numeric dBFS readout.
-*   Displays the current LUFS gain riding value (from the `gain` SSE event).
 
 ### Local Audio Monitor
 

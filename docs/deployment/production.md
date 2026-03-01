@@ -29,6 +29,8 @@ chronyc tracking
 
 **Alarm:** If the S3 uploader begins receiving `403` responses after a period of success, check NTP sync status before investigating credentials.
 
+> **Diagnosing 403 errors:** Check the R2 response XML body before assuming a credential problem. `RequestTimeTooSkewed` is a clock issue; `InvalidAccessKeyId` or `SignatureDoesNotMatch` indicate a credential or implementation bug. The uploader logs the error code at `ERROR` level. Check NTP sync (`timedatectl show-timesync`) before rotating credentials.
+
 ## Step 1: Cloudflare R2 Setup
 
 1.  Log in to the Cloudflare dashboard.
