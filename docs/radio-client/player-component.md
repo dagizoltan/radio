@@ -68,23 +68,19 @@ async _acquireLock() {
     this._enablePlayButton();
     return;
   }
-  const acquired = await new Promise(resolve => {
-    navigator.locks.request(
-      "radio-player-singleton",
-      { ifAvailable: true, signal: this._lockController.signal },
-      async (lock) => {
-        if (!lock) { resolve(false); return; }
-        resolve(true);
-        await new Promise(r => (this._releaseLock = r));
-      }
-    ).catch(() => resolve(false));
+
+  // Notice we omit `ifAvailable: true`. The background tab will wait indefinitely
+  // for the active tab to release the lock, at which point it will enable its own play button.
+  navigator.locks.request("radio-player-singleton", async (lock) => {
+    this._hideMessage();
+    this._enablePlayButton();
+    // Hold the lock until this playback session ends
+    await new Promise(r => (this._releaseLock = r));
+  }).catch((err) => {
+    console.error("Lock error", err);
   });
 
-  if (!acquired) {
-    this._showMessage("Stream is already playing in another tab.");
-    return; // play button remains disabled
-  }
-  this._enablePlayButton();
+  this._showMessage("Stream is already playing in another tab.");
 }
 ```
 
@@ -123,8 +119,8 @@ When the user clicks the "Play" button, the following sequence occurs:
 
 The core of the player is the fetch loop, which continuously polls for new segments and streams them to the decoder.
 
-1.  **Manifest Poll:** Fetch `${this.dataset.r2Url}/live/manifest.json` directly from R2. The base URL is read from `this.dataset.r2Url` (the `data-r2-url` attribute injected during SSR). ETag optimisation (`If-None-Match`) now works correctly because the browser communicates with R2 directly, which returns proper `ETag` headers unmodified.
-    *   **Optimization:** Implement HTTP caching by storing the `ETag` (or `Last-Modified`) from the response headers. Use `If-None-Match` in subsequent fetch requests. If the response is `304 Not Modified`, the manifest has not updated yet, saving processing and bandwidth.
+1.  **Manifest Poll:** Fetch the manifest from the Deno SSR endpoint (e.g., `/api/manifest`), which proxies it from R2 and applies edge caching. This avoids massive Class B GET costs on Cloudflare R2 by coalescing client requests.
+    *   **Optimization:** Rely on the `Cache-Control: s-maxage=5` header set by the Deno server to utilize CDN edge caching.
     *   If offline, update the UI and retry after a delay.
     *   If live, extract `latest` segment index and `segment_s` duration.
 2.  **Buffering Strategy:** Start playing 2 segments behind the `latest` index to build a small buffer against network jitter.
@@ -133,17 +129,23 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   If the player falls more than 3 segments behind `latest` (e.g., due to pausing or network stall), immediately jump to `latest - 1`.
 4.  **Segment Streaming (Direct to CDN):**
     *   Construct the correct URL path using the `R2_PUBLIC_URL` base injected by the server.
-    *   Construct the segment URL based on quality:
+    *   Construct the segment URL based on quality and append the security token if present:
     ```javascript
     const ext = currentQuality === 'hq' ? 'flac' : 'opus';
     const padded = String(currentIndex).padStart(8, '0');
-    const url = `${this.dataset.r2Url}/live/${currentQuality}/segment-${padded}.${ext}`;
+    let url = `${this.dataset.r2Url}/live/${currentQuality}/segment-${padded}.${ext}`;
+    if (this.dataset.token) url += `?token=${this.dataset.token}`;
     ```
-    HQ segments are FLAC (`.flac`). LQ segments are Opus in Ogg (`.opus`). Quality is differentiated by path prefix and file extension.
+    HQ segments are FLAC (`.flac`). LQ segments are raw continuous Opus packets (`.opus`). Quality is differentiated by path prefix and file extension.
     *   Get a `ReadableStreamDefaultReader` from the response body.
     *   Loop `reader.read()`. As each `Uint8Array` chunk arrives:
         *   Pass the chunk to the WASM decoder: `const pcm = decoder.push(chunk)`.
-        *   If `pcm` (a `Float32Array`) has length > 0, post it to the worklet: `workletNode.port.postMessage(pcm.slice())`. **CRITICAL:** Use `.slice()` to copy the data. Do NOT transfer `pcm.buffer` via `[pcm.buffer]` as transferable objects. `pcm.buffer` is the WASM instance's linear memory. Transferring it detaches the memory buffer, instantly crashing the WASM decoder.
+        *   If `pcm` (a `Float32Array`) has length > 0, transfer it to the worklet to avoid main-thread garbage collection. **CRITICAL:** Do NOT transfer `pcm.buffer` directly, as it points to the WASM instance's linear memory. Transferring it detaches the memory buffer, instantly crashing the WASM decoder. Instead, create a copy and transfer the copy's buffer:
+        ```javascript
+        const pcmCopy = new Float32Array(pcm); // Copy out of WASM bounds
+        workletNode.port.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer buffer (zero-allocation for postMessage)
+        ```
+        *(Optional optimization: To achieve true zero-allocation playback, implement a buffer pool using a `MessageChannel` where the Worklet returns empty buffers for the decoder to reuse).*
 5.  **Quality Switching:** If the user changes the quality mid-stream:
     *   The current `reader.cancel()` is called.
     *   A `"FLUSH"` message is sent to the `AudioWorklet` via `postMessage` to instantly clear any buffered PCM data. This prevents an audible pitch-shift or pop when the new codec chunks arrive.

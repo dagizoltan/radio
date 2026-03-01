@@ -20,11 +20,13 @@ When a client makes a `GET /` request, the server executes the following sequenc
 
 ### Direct S3/R2 Fetch
 
-**CRITICAL CONSTRAINT:** The Deno server must not proxy audio segments **or `manifest.json`**. Both are fetched directly from `R2_PUBLIC_URL` by the browser Web Component. The Deno server's sole post-SSR responsibility is serving static assets. Deno Deploy imposes strict egress bandwidth limits. The `radio-player` client-side script fetches the `.flac` and `.opus` chunks *directly* from the `R2_PUBLIC_URL` (Cloudflare CDN). This bypasses the Deno proxy entirely, transferring the massive bandwidth load of thousands of simultaneous streaming users completely onto Cloudflare R2's free-egress CDN.
+**CRITICAL CONSTRAINT:** The Deno server must not proxy audio segments. They are fetched directly from `R2_PUBLIC_URL` by the browser Web Component. The Deno server's post-SSR responsibility is serving static assets and proxying the `manifest.json`. Deno Deploy imposes strict egress bandwidth limits. The `radio-player` client-side script fetches the `.flac` and `.opus` chunks *directly* from the `R2_PUBLIC_URL` (Cloudflare CDN). This bypasses the Deno proxy entirely, transferring the massive bandwidth load of thousands of simultaneous streaming users completely onto Cloudflare R2's free-egress CDN.
 
 *Requirement:* The S3/R2 bucket must have a strict CORS policy enabled (`Access-Control-Allow-Origin` matching the Deno Deploy URL) to allow the browser client to fetch these segments directly.
 
-**No manifest proxy.** The Deno server does not proxy `manifest.json`. The `<radio-player>` Web Component fetches it directly from `${data-r2-url}/live/manifest.json`. Removing this proxy route eliminates the Deno server from the media-critical path.
+**Manifest proxying and Edge Caching.** To avoid excessive Class B operation costs on R2 due to thousands of clients polling `manifest.json` every 10 seconds, the Deno server **must** proxy the `manifest.json` fetch and set a `Cache-Control: s-maxage=5` header. This coalesces thousands of client polls into a single R2 bucket read every few seconds.
+
+**Security Token Injection.** To prevent unauthorized scraping of the public R2 bucket, the S3/R2 bucket should be secured behind a Cloudflare Worker (or Cloudflare Access). The Deno SSR server generates a short-lived cryptographic token (e.g., HMAC signed timestamp) and injects it into the `radio-player` dataset (`data-token`). The player appends this token to segment fetch requests `?token=xyz`. The Cloudflare Worker validates the token before serving the R2 object.
 
 ### Manifest Fetch Failure Handling (SSR)
 
@@ -72,6 +74,7 @@ The Deno server must strictly rely on standard HTTP polling to fetch the `manife
 The server relies on two critical environment variables:
 
 *   **`PORT`**: The HTTP port to bind to. Read from `Deno.env.get("PORT")`. Defaults to `3000`. It binds to `0.0.0.0` for Docker compatibility.
-*   **`R2_PUBLIC_URL`**: Used for a single server-side manifest fetch at SSR render time to populate the live-status badge and initial `data-*` attributes on `<radio-player>`. It is also injected into the HTML as the `data-r2-url` attribute, after which the browser takes over all manifest polling and segment fetching directly against R2. The Deno server makes no further use of this URL after the initial render — it does not proxy any ongoing traffic.
+*   **`R2_PUBLIC_URL`**: Used for a server-side manifest fetch at SSR render time to populate the live-status badge and initial `data-*` attributes on `<radio-player>`. It is also injected into the HTML as the `data-r2-url` attribute.
     *   Local dev: `http://minio:9000/radio-stream`
     *   Production: the Cloudflare R2 public URL (e.g., `https://pub-xxxxxx.r2.dev/my-radio-stream`)
+*   **`TOKEN_SECRET`**: (Optional) Secret key used by the Deno server to generate short-lived HMAC tokens to access the secured R2 bucket.

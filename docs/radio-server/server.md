@@ -27,24 +27,24 @@ Handles direct hardware capture and local uncompressed archiving.
 
 1.  Opens the ALSA capture device using the [Capture Crate](capture.md).
 2.  Initializes a high-quality (HQ) `FlacEncoder` instance for raw encoding.
-3.  Creates a new, timestamped staging file at `/staging/recording-{timestamp}.flac.tmp`. The `/staging` directory is a `tmpfs` mount (see Docker Compose config), ensuring all writes are to RAM and never hit the container's overlayfs. This prevents the high-throughput archive write path (~1.5 GB/hour) from causing overlayfs write amplification.
+3.  Creates a new, timestamped staging file directly in the host-mounted volume at `./recordings/recording-{timestamp}.flac`. The `tmpfs` staging approach was removed because it poses a permanent data loss risk in the event of a power failure or Docker crash. A standard SSD can easily handle the 1.5 GB/hour continuous append-only write workload.
 4.  Enters an asynchronous loop, awaiting periods from the capture device.
 5.  **For each period (4096 frames):**
     *   Calls `IOCTL_READI_FRAMES` to read the period into an `&mut [i32]` buffer.
     *   **XRUN handling (check first):** If `IOCTL_READI_FRAMES` returns `EPIPE` (ALSA buffer overrun), skip all steps below, call `IOCTL_PREPARE` to reset the hardware, increment `radio_capture_overruns_total`, log a `WARN`, and loop back to `async_fd.readable()`. See the [Capture Crate XRUN Recovery](capture.md#xrun-recovery-epipe-handling) section for the full recovery sequence. The following steps only execute on a successful read (`result > 0`).
     *   Computes the peak absolute sample value for the left and right channels for the UI. Updates `vu_left` and `vu_right`.
     *   Encodes the raw `&[i32]` buffer into raw verbatim HQ 24-bit FLAC frames.
-    *   Writes the frames directly to the staging archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
+    *   Writes the frames directly to the archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
     *   Sends the raw PCM period as `Arc<Vec<i32>>` via a bounded `tokio::sync::mpsc` channel (capacity 16) to the Converter Task. The FLAC encoding above is written to the archive only — the Converter receives raw PCM directly and never sees the FLAC-encoded bytes.
     *   Emits VU levels to `sse_tx`.
-6.  **Archiving:** Periodically (every 8 minutes or on graceful shutdown), it flushes the current staging file, closes the handle, and asynchronously copies then deletes it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue. This copy-then-delete is required because a direct `rename()` across these filesystems causes an `EXDEV` error. The 8-minute interval keeps each staging file at ~200 MB, within the 256 MB tmpfs limit. See Docker Compose config for the mount size.
+6.  **Archiving:** Periodically (every 8 hours, or on graceful shutdown), it flushes and closes the current archive file to prevent excessively large file sizes, and opens a new timestamped file to continue.
 
 ### Process 2: Converter Task
 
 Consumes the raw stream and encodes it into multiple qualities (HQ and LQ).
 
 1.  Receives from the bounded `mpsc` channel. The `broadcast` channel carries only JSON event strings for the monitor UI SSE feed. Shutdown is coordinated via a cancellation token, not via the broadcast channel.
-2.  Initializes the audio encoders: one `FlacEncoder` for the HQ stream (24-bit), and one Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`) with an `ogg::PacketWriter` for container framing. Before encoding for Opus, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets; the Ogg writer accumulates them into pages. Each 10-second segment is assembled as a complete, self-contained Ogg Opus stream (includes the two header pages prepended).
+2.  Initializes the audio encoders: one `FlacEncoder` for the HQ stream (24-bit), and one Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`). Before encoding for Opus, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets. Rather than an Ogg container, these raw packets are appended directly into the segment's byte buffer, prefixed by their 2-byte payload length in network byte order (Big Endian), allowing the decoder to slice a continuous stream of Opus packets perfectly gaplessly across 10-second segments.
 
 **Opus PCM Staging Buffer**
 
@@ -65,7 +65,7 @@ On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values
 
 **Frame size constraint:** The Opus encoder must be initialized with a frame size of `960` samples. Do not use other valid Opus frame sizes (480, 2880, etc.) — 960 (20ms at 48kHz) is the standard and produces the best quality/latency balance for this use case.
 
-**Segment boundary:** When the 480,000-frame threshold is reached and a segment is finalized, flush `opus_staging` by passing the exact number of remaining frames directly to the encoder. **Do not** pad with silence, as this will introduce an audible click at the end of every LQ segment. Pass this exact, smaller slice (e.g., 400 frames instead of 960) to `opus_encoder.encode_float()`. Crucially, ensure the Ogg container writer sets the final granule position for that page based on the exact sample count, not a multiple of 960, preventing the decoder from playing trailing silence. Reset `opus_staging` to empty for the next segment.
+**Segment boundary:** When the 480,000-frame threshold is reached and a segment is finalized, flush `opus_staging` by passing the exact number of remaining frames directly to the encoder. **Do not** pad with silence, as this will introduce an audible click at the end of every LQ segment. Pass this exact, smaller slice (e.g., 400 frames instead of 960) to `opus_encoder.encode_float()`. The continuous encoder state must **not** be reset. The resulting raw packet is simply prefixed by its 2-byte length and appended to the final segment. Reset `opus_staging` to empty for the next segment.
 
 3.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames. For each received period:
     *   **HQ FLAC path:** `encode_frame()` receives a `&[i32]` borrow of the `Arc` contents directly. Zero copy, zero allocation.
@@ -155,17 +155,8 @@ When the shutdown signal fires, the cancellation token is cancelled. Each task m
 
 **Recorder Task shutdown:**
 1. Stop reading new periods from ALSA.
-2. Flush and close the current staging FLAC file (write any buffered bytes, fsync).
-3. Move the staging file to `./recordings/`. The `tmpfs` mount is ephemeral — it does not survive container restart. The `rename()` from `/staging/` to `./recordings/` (host-mounted volume) is therefore a **cross-device move**, which the kernel cannot perform atomically. Replace the `tokio::fs::rename` call with a copy-then-delete sequence:
-
-```rust
-// Cross-device move: tmpfs → host volume
-tokio::fs::copy(&staging_path, &final_path).await?;
-tokio::fs::remove_file(&staging_path).await?;
-```
-
-Log the final archive path and size after `copy` completes. If `copy` fails (e.g., disk full on host), log `ERROR` and retain the staging file — it will be lost on container restart, so emit an alarm-level SSE event.
-4. Log the final archive file path and size.
+2. Flush and close the current FLAC archive file (write any buffered bytes, fsync) to ensure the file is completely valid and flushed to disk before the process exits.
+3. Log the final archive file path and size.
 
 **Converter Task shutdown:** Drop the in-progress partial segment (log its incomplete frame count). Do not forward a partial segment to the Uploader via the mpsc channel. **CRITICAL:** Explicitly drop the `mpsc::Sender` instance targeting the Uploader Task when the Converter exits. This ensures the Uploader's `recv()` call wakes up and returns `None`, allowing it to perform its own graceful shutdown without deadlocking.
 
