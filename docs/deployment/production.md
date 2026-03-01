@@ -104,12 +104,12 @@ The ThinkPad has a real-world upload bandwidth of approximately **10.68 Mbps**.
 
 ### Storage Estimation
 
-The system maintains a rolling window of exactly 3 segments per quality stream on R2 at any given time.
+The system maintains a rolling window of exactly 10 segments per quality stream on R2 at any given time.
 
-- **HQ segments:** 3 × ~2.88 MB = **~8.64 MB**
-- **LQ segments:** 3 × ~160 KB (average, VBR range 100–220 KB) = **~0.48 MB average**
+- **HQ segments:** 10 × ~2.88 MB = **~28.8 MB**
+- **LQ segments:** 10 × ~160 KB (average, VBR range 100–220 KB) = **~1.6 MB average**
 - **Manifest:** negligible (~200 bytes)
-- **Total steady-state: ~9.12 MB**
+- **Total steady-state: ~30.4 MB**
 
 This is a predictable, bounded footprint ensuring costs on Cloudflare R2 remain minimal. The previous estimate of ~4.5 MB was based on compressed FLAC for HQ; the correct figure uses verbatim FLAC at ~2.88 MB per segment.
 ## Secret Management

@@ -33,7 +33,7 @@ Unlike FLAC frames, Opus packets are page-aligned by the Ogg container. If a chu
 
 ### Segment Boundary Handling
 
-Each 10-second `.opus` segment is a complete, self-contained Ogg Opus stream (begins with the Opus header pages). When the player advances to the next segment index, a new `OpusDecoder` instance is created (calling `decoder.free()` first to release WASM memory). This avoids any Ogg stream state carried across segment boundaries.
+Each 10-second `.opus` segment is a complete, self-contained Ogg Opus stream (begins with the Opus header pages). When the player advances to the next segment index, it must call `decoder.reset()` instead of destroying and recreating the WASM module. Re-instantiating WASM modules and running initialization logic on the main thread every 10 seconds causes CPU spikes and audio jank. The `reset()` method simply clears the internal `Vec<u8>` accumulator and resets the Ogg `PacketReader` state without reallocating WASM linear memory.
 
 
 ## FlacDecoder Struct
@@ -44,9 +44,7 @@ The `FlacDecoder` struct maintains state across chunk pushes:
 *   Parsed stream parameters (sample rate, channels, bps).
 *   A `header_parsed` boolean flag.
 
-**Per-segment lifecycle:** A new `FlacDecoder` instance **must** be created for each segment. Call `decoder.free()` to release WASM memory before creating the new instance. Rationale: each segment begins with a full FLAC stream header (`fLaC` + `STREAMINFO`), so the decoder's `header_parsed` flag must be reset to `false` and the accumulator buffer must be empty. Reusing a `FlacDecoder` across segments will cause the second segment's stream header to be misinterpreted as frame data.
-
-Contrast with Opus: the `OpusDecoder` is also recreated per segment (already documented). Both decoders follow the same per-segment lifecycle.
+**Per-segment lifecycle:** Similar to Opus, do not create a new `FlacDecoder` instance per segment to avoid main-thread allocation jank. Expose a `decoder.reset()` method that empties the accumulator buffer and sets `header_parsed` to `false`. Since each segment begins with a full FLAC stream header (`fLaC` + `STREAMINFO`), calling `reset()` ensures the next chunk correctly parses the header rather than misinterpreting it as frame data.
 
 ## push() Method API
 
