@@ -70,7 +70,7 @@ Where `/tmp/cors.json` contains:
 *   **Ports**: Exposes port `8080` (Monitor UI).
 *   **Device Passthrough**: Maps `/dev/snd` from the host to `/dev/snd` in the container.
 *   **Volumes**: Mounts `./recordings` as a volume to persist recordings on the host machine.
-*   **tmpfs**: Mounts a tmpfs at `/staging` for fast RAM-backed staging file writes: `tmpfs: ["/staging:size=64m,mode=1777"]`.
+*   **tmpfs**: Mounts a tmpfs at `/staging` for fast RAM-backed staging file writes: `tmpfs: ["/staging:size=256m,mode=1777"]`.
 *   **Audio Group GID Fix**: The entrypoint is a custom shell script that resolves permissions for the ALSA device.
     1.  Reads the GID of `/dev/snd/controlC0` from the host.
     2.  Adjusts the container's `audio` group to match the host GID.
@@ -99,7 +99,7 @@ Where `/tmp/cors.json` contains:
 
 *   `minio-data`: A persistent named volume for the S3-compatible backend.
 
-The `/staging` tmpfs is sized at 64 MB. At ~1.5 GB/hour, a single 60-minute staging file reaches ~1.04 GB — well above 64 MB. The Recorder Task must therefore rotate the staging file to `./recordings/` more frequently than once per hour. The recommended rotation interval is **every 10 minutes** (~240 MB per staging file), which fits comfortably within the 64 MB limit.
+The `/staging` tmpfs is sized at 256 MB. At ~1.5 GB/hour the Recorder writes approximately 25 MB/minute. The Recorder Task must rotate the staging file to `./recordings/` every **8 minutes** (~200 MB per staging file), which fits within the 256 MB limit with ~25% headroom. Do not increase the rotation interval beyond 8 minutes without also increasing the tmpfs size proportionally.
 
 ## Environment Files
 

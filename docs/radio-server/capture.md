@@ -48,6 +48,23 @@ The capture loop uses Tokio's `AsyncFd` for zero-polling, kernel-driven wakeups.
 4.  The task calls `try_io` with the `IOCTL_READI_FRAMES` ioctl to read the period into an `&mut [i32]` buffer.
 5.  If the read is successful, it returns the number of samples read. If it returns `EWOULDBLOCK`, the task loops back to await readability.
 
+## XRUN Recovery (EPIPE Handling)
+
+An ALSA buffer overrun (xrun) occurs when the kernel fills the capture buffer faster than the Recorder Task reads it — typically caused by a CPU spike or scheduling delay. When an xrun occurs, the ALSA device transitions to an error state and subsequent `IOCTL_READI_FRAMES` calls return `EPIPE` rather than `EWOULDBLOCK`.
+
+**Critical:** Do not treat `EPIPE` as `EWOULDBLOCK`. Looping on `readable()` after an xrun will never produce a wakeup — the device is in an error state, not a "not yet ready" state.
+
+**Recovery sequence:**
+
+1. Detect `EPIPE` from `IOCTL_READI_FRAMES`.
+2. Log `WARN: ALSA xrun detected on period {n} — recovering`.
+3. Increment the `radio_capture_overruns_total` Prometheus counter.
+4. Call `IOCTL_PREPARE` on the file descriptor to reset the hardware state.
+5. If `IOCTL_PREPARE` succeeds, loop back to `async_fd.readable()` and resume normally.
+6. If `IOCTL_PREPARE` fails, log `ERROR: ALSA prepare failed after xrun ({errno}) — retrying in 100ms` and sleep before retrying.
+
+**Archive impact:** Each xrun results in one lost ALSA period (~85ms of audio) from the local archive. This is already tracked by the `capture_overruns_total` counter and the `vu` SSE event gap. Any non-zero value for `radio_capture_overruns_total` should trigger operator investigation per the observability baseline.
+
 ## Critical Constraints
 
 **CRITICAL CONSTRAINT:** No C bindings in capture. The capture crate must not link against `libasound` or any C audio library. All ALSA interaction is via raw kernel ioctls through `rustix`.

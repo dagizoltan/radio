@@ -59,7 +59,7 @@ Navigate to `http://localhost:8080`.
 *   The "Live" badge should be green.
 *   The Dual VU Meters should be animating in real-time if audio is flowing into the UMC404HD.
 *   The "R2 Uploads" timeline should populate with segment pills as they are uploaded to MinIO.
-*   Click the "Play" button under "Local Audio Monitor" to hear the live normalized stream directly from the server's RAM.
+*   Click the "Play" button under "Local Audio Monitor" to hear the live encoded stream directly from the server's RAM.
 
 ### 6. Open the Listener Interface
 

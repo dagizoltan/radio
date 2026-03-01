@@ -1,6 +1,6 @@
 # Radio Server Overview
 
-The `radio-server` is a pure Rust binary running on the ThinkPad. It is responsible for capturing audio, encoding it to FLAC, normalizing the signal, archiving it locally, uploading segments to R2, and serving a local monitor UI.
+The `radio-server` is a pure Rust binary running on the ThinkPad. It is responsible for capturing audio, encoding it to FLAC, archiving it locally, uploading segments to R2, and serving a local monitor UI.
 
 ## Crate Workspace Layout
 

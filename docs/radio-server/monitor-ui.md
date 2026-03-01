@@ -32,7 +32,7 @@ Displays real-time audio levels for the Left and Right channels.
 
 ### Local Audio Monitor
 
-Allows the operator to listen to the normalized stream directly from the server's RAM.
+Allows the operator to listen to the live encoded stream directly from the server's RAM.
 *   **Playback:** Uses `fetch()` to hit the `/local/:id` endpoint.
 *   **Decoding:** Since this is a controlled environment (modern browser on localhost), it uses the built-in Web Audio API `AudioContext.decodeAudioData()`. It does not require the WASM decoder used by the public client.
 *   **Sequencing:** Plays segments sequentially as they arrive.

@@ -34,8 +34,9 @@ Handles direct hardware capture and local uncompressed archiving.
     *   Encodes the raw `&[i32]` buffer into raw verbatim HQ 24-bit FLAC frames.
     *   Writes the frames directly to the staging archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
     *   Sends the raw PCM period as `Arc<Vec<i32>>` via a bounded `tokio::sync::mpsc` channel (capacity 16) to the Converter Task. The FLAC encoding above is written to the archive only — the Converter receives raw PCM directly and never sees the FLAC-encoded bytes.
+    *   **XRUN handling:** If `IOCTL_READI_FRAMES` returns `EPIPE` (ALSA buffer overrun), do not treat it as `EWOULDBLOCK`. Call `IOCTL_PREPARE` to reset the hardware, increment `radio_capture_overruns_total`, log a `WARN`, and resume the read loop. See the [Capture Crate XRUN Recovery](capture.md#xrun-recovery-epipe-handling) section for the full recovery sequence.
     *   Emits VU levels to `sse_tx`.
-6.  **Archiving:** Periodically (every 10 minutes or on graceful shutdown), it flushes the current staging file, closes the handle, and asynchronously moves it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue.
+6.  **Archiving:** Periodically (every 8 minutes or on graceful shutdown), it flushes the current staging file, closes the handle, and asynchronously moves it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue. The 8-minute interval keeps each staging file at ~200 MB, within the 256 MB tmpfs limit. See Docker Compose config for the mount size.
 
 ### Process 2: Converter Task
 
@@ -65,9 +66,11 @@ On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values
 
 **Segment boundary:** When the 480,000-frame threshold is reached and a segment is finalized, flush `opus_staging` by padding the remaining samples with silence up to the next full 960-frame boundary before writing the final Ogg page. Log the number of silence-padded samples (always fewer than 960 frames = 1920 samples). Reset `opus_staging` to empty for the next segment.
 
-3.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames.
-4.  The Converter receives the raw PCM period as `Arc<Vec<i32>>` and passes it directly to the HQ FLAC encoder and the Opus encoder. No copy is made. The buffer is not mutated.
-5.  **Segment Assembly:** Accumulates the encoded frames for both qualities.
+3.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames. For each received period:
+    *   **HQ FLAC path:** `encode_frame()` receives a `&[i32]` borrow of the `Arc` contents directly. Zero copy, zero allocation.
+    *   **LQ Opus path:** Samples are copied element-wise into `opus_staging` for frame-size alignment (see Opus PCM Staging Buffer above). This is a necessary copy; the shared `Arc` contents are never mutated.
+    *   Neither path mutates the shared buffer. The `Arc` is dropped when both paths have consumed the period.
+4.  **Segment Assembly:** Accumulates the encoded frames for both qualities.
     *   *Optimization Strategy:* To prevent constant vector reallocations as frames accumulate, the accumulator `Vec<u8>` for the 10-second segment must be pre-allocated with `Vec::with_capacity()`. A 10-second 24-bit verbatim FLAC segment contains the raw PCM payload (`48000 * 3 bytes * 2 channels * 10s = 2,880,000` bytes) plus the FLAC framing overhead. A 10s segment has ~117 FLAC frames, each contributing a frame header (~10-15 bytes) and a CRC-16 (2 bytes), adding around ~1,700 bytes. To ensure zero reallocations, the buffer must be padded slightly larger than just the PCM size.
     *   **Threshold:** 480,000 frames (10 × 48000 Hz). Track a `frame_counter: u64` incremented by `period_frames` (4096) per ALSA period. Pre-allocate accumulator: `Vec::with_capacity(2_885_000)` for HQ (PCM + framing overhead padding).
     *   Assembles complete, standalone files in memory by prepending the respective stream headers to the filled accumulator.

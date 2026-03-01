@@ -20,7 +20,7 @@ The Lossless Vinyl Radio Streaming System is a two-part architecture designed to
 |  |  1. [ HQ Recorder ] -> [ Local Archive ]            |  |
 |  |           |                                         |  |
 |  |           v                                         |  |
-|  |  2. [ Converter (Norm, HQ & LQ Encode) ]            |  |
+|  |  2. [ Converter (HQ & LQ Encode) ]                  |  |
 |  |           |                                         |  |
 |  |           v                                         |  |
 |  |  3. [ Cloud Uploader ] -> [ R2 Storage ]            |  |
