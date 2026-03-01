@@ -30,11 +30,12 @@ Handles direct hardware capture and local uncompressed archiving.
 3.  Creates a new, timestamped staging file at `/staging/recording-{timestamp}.flac.tmp`. The `/staging` directory is a `tmpfs` mount (see Docker Compose config), ensuring all writes are to RAM and never hit the container's overlayfs. This prevents the high-throughput archive write path (~1.5 GB/hour) from causing overlayfs write amplification.
 4.  Enters an asynchronous loop, awaiting periods from the capture device.
 5.  **For each period (4096 frames):**
+    *   Calls `IOCTL_READI_FRAMES` to read the period into an `&mut [i32]` buffer.
+    *   **XRUN handling (check first):** If `IOCTL_READI_FRAMES` returns `EPIPE` (ALSA buffer overrun), skip all steps below, call `IOCTL_PREPARE` to reset the hardware, increment `radio_capture_overruns_total`, log a `WARN`, and loop back to `async_fd.readable()`. See the [Capture Crate XRUN Recovery](capture.md#xrun-recovery-epipe-handling) section for the full recovery sequence. The following steps only execute on a successful read (`result > 0`).
     *   Computes the peak absolute sample value for the left and right channels for the UI. Updates `vu_left` and `vu_right`.
     *   Encodes the raw `&[i32]` buffer into raw verbatim HQ 24-bit FLAC frames.
     *   Writes the frames directly to the staging archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
     *   Sends the raw PCM period as `Arc<Vec<i32>>` via a bounded `tokio::sync::mpsc` channel (capacity 16) to the Converter Task. The FLAC encoding above is written to the archive only — the Converter receives raw PCM directly and never sees the FLAC-encoded bytes.
-    *   **XRUN handling:** If `IOCTL_READI_FRAMES` returns `EPIPE` (ALSA buffer overrun), do not treat it as `EWOULDBLOCK`. Call `IOCTL_PREPARE` to reset the hardware, increment `radio_capture_overruns_total`, log a `WARN`, and resume the read loop. See the [Capture Crate XRUN Recovery](capture.md#xrun-recovery-epipe-handling) section for the full recovery sequence.
     *   Emits VU levels to `sse_tx`.
 6.  **Archiving:** Periodically (every 8 minutes or on graceful shutdown), it flushes the current staging file, closes the handle, and asynchronously moves it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue. The 8-minute interval keeps each staging file at ~200 MB, within the 256 MB tmpfs limit. See Docker Compose config for the mount size.
 
