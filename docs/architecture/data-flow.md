@@ -37,7 +37,7 @@ The `radio-server` audio pipeline uses two dedicated `tokio::sync::mpsc` channel
 ### SSE Event Bus (`broadcast`)
 - **Producer:** Any task.
 - **Consumers:** All connected monitor UI SSE clients (via `sse_tx`).
-- **Payload:** JSON event strings (status, VU levels, gain, recording info, R2 upload status).
+- **Payload:** JSON event strings (status, VU levels, recording info, R2 upload status).
 - **Drop policy:** `RecvError::Lagged` from the broadcast channel is benign here — a monitor UI client that falls behind simply misses a VU meter update, not audio data.
 
 **CRITICAL CONSTRAINT:** The Recorder encodes raw PCM to FLAC and writes it to the archive independently before forwarding PCM.

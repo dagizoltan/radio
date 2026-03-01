@@ -1,6 +1,6 @@
 # Lossless Vinyl Radio Streaming System Documentation
 
-This system captures analog audio from a vinyl turntable (via a Behringer UMC404HD USB interface), encodes it losslessly to FLAC, archives a pristine copy locally on a ThinkPad, normalizes a live stream, and pushes 10-second segments to Cloudflare R2 (or local MinIO). Listeners worldwide consume the live stream through a Deno Deploy frontend that decodes the FLAC chunks directly in the browser using a custom WASM decoder and an AudioWorklet.
+This system captures analog audio from a vinyl turntable (via a Behringer UMC404HD USB interface), encodes it losslessly to FLAC, archives a pristine copy locally on a ThinkPad, encodes the stream to multiple qualities, and pushes 10-second segments to Cloudflare R2 (or local MinIO). Listeners worldwide consume the live stream through a Deno Deploy frontend that decodes the FLAC chunks directly in the browser using a custom WASM decoder and an AudioWorklet.
 
 ## System Diagram
 

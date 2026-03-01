@@ -6,7 +6,7 @@ This document defines healthy operating ranges and alarm thresholds for all tele
 
 | Metric | Source | Healthy Range | Alarm Threshold | Notes |
 |---|---|---|---|---|
-| Capture buffer overruns | Recorder Task | 0 / hour | > 0 | Any overrun means audio was lost from the archive. Investigate ALSA buffer size or CPU load. |
+| Capture buffer overruns | Recorder Task | 0 / hour | > 0 | Any overrun means audio was lost from the archive. Caused by ALSA `EPIPE` (xrun) — the kernel filled the capture ring buffer before the Recorder Task read it. Investigate CPU scheduling spikes or increase the ALSA buffer size (currently 4 periods × 4096 frames). |
 | ALSA period read latency | Recorder Task | < 2ms | > 10ms | Time from `AsyncFd::readable()` wakeup to `IOCTL_READI_FRAMES` completion. |
 | Segment assembly time | Converter Task | 9.9–10.1s | < 9.5s or > 10.5s | Should be very close to 10s. Deviation indicates a sample rate mismatch between capture and encoder. |
 | Segment upload exhaustion count | Uploader Task | 0 / hour | > 0 | A skipped segment means a gap in the live stream. Investigate R2 connectivity. |

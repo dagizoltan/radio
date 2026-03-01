@@ -143,4 +143,4 @@ docker compose stop --timeout 30
 5. The Cloud Uploader Task completes the in-flight S3 `PUT` (with up to 3 retries), then writes a final `manifest.json` with `"live": false`.
 6. The binary exits cleanly.
 
-**If the server is killed with SIGKILL or crashes:** The staging file in `/tmp/` is abandoned with a partial final frame. The FLAC file is still readable by standard players (the `total_samples` field is `0` / streaming-unknown, which is valid FLAC). The archive rotation script should run `flac --test` on new files before moving them to cold storage. See [Archive Integrity Verification](../reference/archive-integrity.md).
+**If the server is killed with SIGKILL or crashes:** The staging file in `/staging/` (the tmpfs mount) is abandoned with a partial final frame. Because `/staging/` is an in-memory tmpfs, the file is lost entirely on container restart — it is not recoverable from disk. The archive rotation script should detect gaps in the timestamped filename sequence and log them.
