@@ -114,7 +114,7 @@ When the user clicks the "Play" button, the following sequence occurs:
     const opusDecoder = new OpusDecoder();
     let decoder = currentQuality === 'hq' ? flacDecoder : opusDecoder;
 
-    // On quality switch: call `decoder.reset()`, send `"FLUSH"` to the worklet, then swap the `decoder` reference.
+    // On quality switch: call `decoder.reset()`, send `"FLUSH"` to the worklet, then swap the `decoder` reference, and advance to the NEXT segment index to avoid audible rewind.
     ```
 7.  **Fetch Loop (`setInterval` / Web Worker):** Start the main fetch loop. Crucially, the fetch polling loop must **not** rely on `requestAnimationFrame` or `setTimeout` running on the main thread, because browsers heavily throttle (or pause entirely) background tabs. To keep audio playing smoothly while the listener browses other tabs, the fetch loop should be driven by a `setInterval` running in a dedicated Web Worker, which passes fetch commands or chunk events back to the main thread `MessagePort`.
 8.  **Waveform Animation Loop:** The visual waveform updates independently using `requestAnimationFrame`. When the tab is backgrounded, it correctly pauses rendering to save battery, but the separate Web Worker continues fetching audio chunks.
@@ -148,8 +148,8 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   The current `reader.cancel()` is called.
     *   A `"FLUSH"` message is sent to the `AudioWorklet` via `postMessage` to instantly clear any buffered PCM data. This prevents an audible pitch-shift or pop when the new codec chunks arrive.
     *   The `currentQuality` state updates.
-    *   The fetch loop immediately attempts to fetch the *same* `currentIndex` using the new quality path (`hq` FLAC or `lq` Opus).
-    **Audio rewind on quality switch:** Because the fetch loop re-fetches the same `currentIndex` from byte 0 in the new codec, the listener may hear up to 10 seconds of audio repeated after a quality switch (the portion of the current segment already played). This is intentional — it produces a clean decode boundary with no codec state bleed. The alternative (fetching the *next* segment index) would produce a forward skip of up to 10 seconds, which is more disorienting. Operators should be aware that the LQ ↔ HQ toggle has an audible rewind artefact of up to one full segment duration.
+    *   The fetch loop immediately attempts to fetch the *next* `currentIndex` (`currentIndex + 1`) using the new quality path (`hq` FLAC or `lq` Opus).
+    **Audio forward skip on quality switch:** Because the fetch loop fetches the *next* `currentIndex` from byte 0 in the new codec, the listener may experience a slight forward skip (up to 10 seconds of audio) after a quality switch (the portion of the current segment skipped). This produces a clean decode boundary with no codec state bleed and provides a better user experience than re-playing up to 10 seconds of already-heard audio.
 6.  **Iteration:** When `reader.read()` returns `done: true` normally, increment the `currentIndex`.
 7.  **Latency Display:** Calculate and update the UI with the estimated latency: `(latest - currentIndex) * segment_s` seconds behind live.
 ## AudioContext Lifecycle and Background Tab Handling

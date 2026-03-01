@@ -65,7 +65,7 @@ On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values
 
 **Frame size constraint:** The Opus encoder must be initialized with a frame size of `960` samples. Do not use other valid Opus frame sizes (480, 2880, etc.) — 960 (20ms at 48kHz) is the standard and produces the best quality/latency balance for this use case.
 
-**Segment boundary:** When the 480,000-frame threshold is reached and a segment is finalized, flush `opus_staging` by passing the exact number of remaining frames directly to the encoder. **Do not** pad with silence, as this will introduce an audible click at the end of every LQ segment. Let the encoder finalize the Ogg granule position correctly for the truncated packet. Reset `opus_staging` to empty for the next segment.
+**Segment boundary:** When the 480,000-frame threshold is reached and a segment is finalized, flush `opus_staging` by passing the exact number of remaining frames directly to the encoder. **Do not** pad with silence, as this will introduce an audible click at the end of every LQ segment. Pass this exact, smaller slice (e.g., 400 frames instead of 960) to `opus_encoder.encode_float()`. Crucially, ensure the Ogg container writer sets the final granule position for that page based on the exact sample count, not a multiple of 960, preventing the decoder from playing trailing silence. Reset `opus_staging` to empty for the next segment.
 
 3.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames. For each received period:
     *   **HQ FLAC path:** `encode_frame()` receives a `&[i32]` borrow of the `Arc` contents directly. Zero copy, zero allocation.
@@ -95,7 +95,7 @@ Receives completed segments and handles S3 uploads and manifest management.
 3.  Loops, receiving assembled segment files.
 4.  **Upload:**
     *   Uploads the segments to S3 using raw HTTP with [AWS Signature V4](aws-sig-v4.md).
-    *   **Resilience:** Uses an exponential backoff retry loop (e.g., 3-5 retries) for the HTTP PUT requests to handle transient network drops.
+    *   **Resilience:** Uses an exponential backoff retry loop (e.g., 3-5 retries) for the HTTP PUT requests to handle transient network drops. To prevent unbounded channel stalls from backing up the pipeline, the `reqwest` client must be configured with aggressive timeouts (e.g., a `connect_timeout` of 2s and a total `timeout` of 8s). If the HTTP request hits the timeout, it counts as a failure towards the retry limit. Once exhausted, the segment is aggressively dropped, unblocking the channel so the Recorder task is not impacted.
     *   Key format uses quality folders: e.g., `live/hq/segment-{:08}.flac` and `live/lq/segment-{:08}.opus`.
     *   Writes `live/manifest.json` containing metadata for both streams: `{"live": true, "latest": index, "segment_s": 10, "updated_at": timestamp, "qualities": ["hq", "lq"]}`.
     *   **Crucial Caching Instruction:** The `PUT` request for `manifest.json` **must** include the `Cache-Control: no-store, max-age=0` metadata explicitly. Although `no-cache` would allow ETag-based revalidation, clients implement ETag tracking manually in JavaScript memory and fetch directly from R2. `no-store` is used to ensure no intermediate CDN layer retains any copy of the manifest.

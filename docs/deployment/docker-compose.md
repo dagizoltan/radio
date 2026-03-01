@@ -31,19 +31,13 @@ The topology consists of four distinct services:
 
 *   **Image**: `quay.io/minio/mc:latest`
 *   **Dependencies**: `depends_on: minio` with the `condition: service_healthy` flag. This ensures setup only begins after the storage backend is fully initialized.
-*   **Execution**: Runs a shell one-liner to initialize the bucket and access policies:
+*   **Execution**: To ensure a seamless, zero-touch local development experience, the `minio-setup` container uses a custom `entrypoint` script (e.g., mounted via volume) that automatically configures the bucket, policies, and CORS.
     *   Sets an alias for the local `minio` service.
     *   Creates the target bucket (e.g., `radio-stream`) using `--ignore-existing`.
     *   Sets the anonymous download policy to allow public reads directly from the client browser.
+    *   Applies a CORS policy to allow direct browser `GET` requests.
 
-
-After setting the anonymous download policy, configure a CORS policy to allow direct browser `GET` requests:
-
-```bash
-mc anonymous set-json /tmp/cors.json minio/radio-stream
-```
-
-Where `/tmp/cors.json` contains:
+The automated script applies the following CORS JSON rule using `mc anonymous set-json /tmp/cors.json minio/radio-stream`:
 ```json
 {
   "CORSRules": [{
@@ -58,7 +52,7 @@ Where `/tmp/cors.json` contains:
 
 `ExposeHeaders: ["ETag"]` is required so the browser's `If-None-Match` manifest polling optimisation (which now hits MinIO directly) functions correctly.
 
-*   **Lifecycle**: Exits immediately upon completion.
+*   **Lifecycle**: Exits immediately upon successful script completion.
 
 ### 3. `radio`
 

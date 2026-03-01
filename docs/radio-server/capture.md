@@ -64,6 +64,7 @@ An ALSA buffer overrun (xrun) occurs when the kernel fills the capture buffer fa
 6. If `IOCTL_PREPARE` fails, log `ERROR: ALSA prepare failed after xrun ({errno}) — retrying in 100ms` and sleep before retrying.
 
 **Archive impact:** Each xrun results in one lost ALSA period (~85ms of audio) from the local archive. This is already tracked by the `capture_overruns_total` counter and the `vu` SSE event gap. Any non-zero value for `radio_capture_overruns_total` should trigger operator investigation per the observability baseline.
+**Mitigation strategy:** To minimize `EPIPE` xruns and prioritize the pristine local archive, the `radio-server` capture thread should be configured with `SCHED_FIFO` real-time scheduling priority (via `libc::sched_setscheduler` or equivalent) on startup. This ensures the capture thread preempts normal OS processes and reads the hardware buffer reliably before an overrun occurs.
 
 ## Critical Constraints
 
