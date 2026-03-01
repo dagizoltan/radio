@@ -127,6 +127,7 @@ The core of the player is the fetch loop, which continuously polls for new segme
 3.  **Jump-Ahead Logic:**
     *   If the player's current segment index is ahead of `latest`, sleep for `segment_s / 2` and repoll.
     *   If the player falls more than 3 segments behind `latest` (e.g., due to pausing or network stall), immediately jump to `latest - 1`.
+    *   **Server Restart Detection:** If the `latest` index abruptly drops by a large amount or resets to `0` (and it is not a normal rollover from 99,999,999), this indicates the backend server restarted. The continuous Opus stream state has been broken. In this case, call `decoder.reset()` before fetching the new segment to avoid decoding errors or audio glitches.
 4.  **Segment Streaming (Direct to CDN):**
     *   Construct the correct URL path using the `R2_PUBLIC_URL` base injected by the server.
     *   Construct the segment URL based on quality and append the security token if present:
@@ -140,12 +141,13 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   Get a `ReadableStreamDefaultReader` from the response body.
     *   Loop `reader.read()`. As each `Uint8Array` chunk arrives:
         *   Pass the chunk to the WASM decoder: `const pcm = decoder.push(chunk)`.
-        *   If `pcm` (a `Float32Array`) has length > 0, transfer it to the worklet to avoid main-thread garbage collection. **CRITICAL:** Do NOT transfer `pcm.buffer` directly, as it points to the WASM instance's linear memory. Transferring it detaches the memory buffer, instantly crashing the WASM decoder. Instead, create a copy and transfer the copy's buffer:
+        *   If `pcm` (a `Float32Array`) has length > 0, transfer it to the worklet to avoid main-thread garbage collection. **CRITICAL:** Do NOT transfer `pcm.buffer` directly, as it points to the WASM instance's linear memory. Transferring it detaches the memory buffer, instantly crashing the WASM decoder. Instead, you **must** implement a buffer pool to copy the data into and transfer to the worklet. Creating a `new Float32Array(pcm)` on every chunk will eventually trigger main-thread garbage collection pauses. Use a `MessageChannel` (or simply `port.onmessage`) where the Worklet returns empty buffers for the decoder to reuse, achieving true zero-allocation playback:
         ```javascript
-        const pcmCopy = new Float32Array(pcm); // Copy out of WASM bounds
-        workletNode.port.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer buffer (zero-allocation for postMessage)
+        // Assume `pool` is an array of recycled Float32Arrays
+        const pcmCopy = pool.pop() || new Float32Array(pcm.length);
+        pcmCopy.set(pcm); // Copy out of WASM bounds into pooled buffer
+        workletNode.port.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer buffer
         ```
-        *(Optional optimization: To achieve true zero-allocation playback, implement a buffer pool using a `MessageChannel` where the Worklet returns empty buffers for the decoder to reuse).*
 5.  **Quality Switching:** If the user changes the quality mid-stream:
     *   The current `reader.cancel()` is called.
     *   A `"FLUSH"` message is sent to the `AudioWorklet` via `postMessage` to instantly clear any buffered PCM data. This prevents an audible pitch-shift or pop when the new codec chunks arrive.
