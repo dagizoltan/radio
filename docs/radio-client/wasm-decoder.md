@@ -15,25 +15,21 @@ Specifically, it only handles:
 
 ## OpusDecoder (LQ Stream)
 
-The `decoder/opus/` crate exposes an `OpusDecoder` class for the LQ Opus-in-Ogg stream. It uses the `opus-rs` crate (safe Rust bindings to the reference libopus implementation) and the `ogg` crate for Ogg packet framing. Both compile to WASM via `wasm-pack --target web`.
+The `decoder/opus/` crate exposes an `OpusDecoder` class for the LQ gapless continuous Opus stream. It uses the `opus-rs` crate (safe Rust bindings to the reference libopus implementation) and compiles to WASM via `wasm-pack --target web`.
 
 ### push() Method API
 
 The API is identical to `FlacDecoder.push()`: `push(bytes: &[u8]) -> Vec<f32>`.
 
-1.  **Ogg Sync:** Incoming bytes are fed to an Ogg `PacketReader`. Ogg provides its own sync and resync mechanism — if bytes arrive mid-page, the reader discards data until the next page capture pattern (`OggS`).
-2.  **Opus Header Pages:** The first two Ogg pages are the Opus header and comment header. These are parsed to extract channel count and pre-skip samples. They produce no PCM output.
-3.  **Decode Loop:** Subsequent Ogg pages contain Opus audio packets. Each packet is passed to `OpusDecoder::decode_float()`, producing interleaved `f32` PCM at 48000 Hz (Opus natively operates at 48 kHz).
-4.  **Pre-skip:** The first `pre_skip` samples of decoded audio are discarded (per the Opus spec) to account for encoder lookahead delay. The `pre_skip` value (typically 312 samples at 48000 Hz, ~6.5ms) is read from the Opus ID header of each segment. Because each `.opus` segment is a self-contained Ogg Opus stream, `pre_skip` applies at the start of every segment, not just the first. The consequence is a ~6.5ms gap of silence at the start of each decoded segment. This is inherent to segmented Opus streaming. See the "Why Opus" section of `decisions.md` for the cumulative impact over a broadcast hour. Because each decoded LQ segment yields approximately 312 fewer PCM frames than the nominal 480,000, the latency display will slightly underestimate the true live edge gap over long sessions. The fetch loop is unaffected — it advances to the next segment index as soon as the current segment stream is exhausted.
+1.  **Binary Format Accumulation:** The LQ stream abandons the Ogg container to achieve gapless continuous streaming. Instead, the raw incoming bytes are accumulated in an internal `Vec<u8>` buffer.
+2.  **Length Prefix Parsing:** The decoder reads a 2-byte Big Endian integer `u16` from the front of the accumulator, representing the length of the following raw Opus packet payload.
+3.  **Decode Loop:** It extracts the payload of the specified length and passes it to `OpusDecoder::decode_float()`, producing interleaved `f32` PCM at 48000 Hz. If the accumulator does not hold enough bytes for the complete payload length, it aborts the loop and waits for the next chunk via `push()`.
+4.  **No Pre-skip:** Because the stream is continuous and does not use Ogg page boundaries, the Opus decoder maintains its state seamlessly across 10-second HTTP segment boundaries. There is no `pre_skip` to discard, completely eliminating the 6.5ms gap present in the older Ogg implementation.
 5.  **Return:** Decoded `f32` samples are returned in the same format as `FlacDecoder`: interleaved stereo, range `[-1.0, 1.0]`, ready for the AudioWorklet ring buffer.
-
-### Ogg Page Boundary Behaviour
-
-Unlike FLAC frames, Opus packets are page-aligned by the Ogg container. If a chunk boundary falls mid-page, the `PacketReader` buffers the partial page and waits for the next `push()` call to complete it. No explicit frame-boundary detection is required — Ogg handles synchronisation.
 
 ### Segment Boundary Handling
 
-Each 10-second `.opus` segment is a complete, self-contained Ogg Opus stream (begins with the Opus header pages). When the player advances to the next segment index, it must call `decoder.reset()` instead of destroying and recreating the WASM module. Re-instantiating WASM modules and running initialization logic on the main thread every 10 seconds causes CPU spikes and audio jank. The `reset()` method simply clears the internal `Vec<u8>` accumulator and resets the Ogg `PacketReader` state without reallocating WASM linear memory.
+The player simply fetches the next `.opus` segment and continues calling `decoder.push()` with the raw bytes. The WASM decoder does not need to be reset between segments because the binary stream layout is strictly continuous (a 2-byte length prefix spanning perfectly across HTTP chunk boundaries).
 
 
 ## FlacDecoder Struct

@@ -18,10 +18,11 @@ It exposes a `"volume"` parameter via the `parameterDescriptors` static getter, 
 
 ## Port Messages
 
-The main thread sends `Float32Array` chunks (interleaved stereo PCM from the WASM decoder) to the worklet via `this.port.postMessage`.
+The main thread sends `Float32Array` chunks (interleaved stereo PCM from the WASM decoder) to the worklet via `this.port.postMessage(pcmCopy, [pcmCopy.buffer])`, transferring the ArrayBuffer to avoid main-thread garbage collection.
 
 The worklet implements `this.port.onmessage = (event) => { ... }` to receive these messages.
-*   If the message contains a `Float32Array`, it copies the chunk into the `ringBuffer` starting at the `writePointer`, wrapping around to index 0 if it hits the end of the array. It increments `samplesAvailable`.
+*   If the message contains a transferred `Float32Array`, it copies the chunk into the `ringBuffer` starting at the `writePointer`, wrapping around to index 0 if it hits the end of the array. It increments `samplesAvailable`.
+*   *(Optional)* If a buffer pool is implemented, the worklet posts the empty `Float32Array` buffer back to the main thread after copying it to the `ringBuffer` so it can be reused for future decoding.
 *   **Ring Buffer Overflow Protection:** Before writing an incoming chunk, the handler must check available free space: `freeSpace = ringBuffer.length - samplesAvailable`. If `chunk.length > freeSpace`, the ring buffer is full. In this case, the worklet must *drop the incoming chunk* entirely to prevent corrupting the buffer. The worklet should then post a message back to the main thread indicating the overflow (e.g., `this.port.postMessage({ type: "OVERFLOW", droppedFrames: chunk.length })`). The main thread can log this event and, if frequent, trigger a hard resync. Dropping the new chunk (instead of overwriting the oldest unplayed data) ensures that when a suspended `AudioContext` resumes, the buffered audio remains contiguous before the `visibilitychange` handler flushes and jumps to the live edge. Without this check, the write pointer will silently wrap and corrupt previously buffered audio.
 *   If the message is a specific string command (e.g., `"FLUSH"`), it immediately zeroes out the `samplesAvailable` and aligns the read/write pointers. This is critical for preventing audio artifacts when the user switches stream qualities mid-playback.
 *   If the message is `{ type: "QUERY_DEPTH" }`, respond immediately via `this.port.postMessage({ type: "DEPTH_RESPONSE", samplesAvailable: this.samplesAvailable })`. This is used by the player's visibility change handler to determine whether the buffer contains stale audio after returning from a background tab.

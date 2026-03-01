@@ -38,23 +38,8 @@ chronyc tracking
 3.  Create a new bucket (e.g., `my-radio-stream`).
 4.  Navigate to **Settings** for the bucket.
 5.  Enable **Public Access** (either via an R2.dev subdomain or by binding a custom domain). Note this URL as the `R2_PUBLIC_URL` for the client.
-6.  **Configure CORS Policy:** In the bucket **Settings** page, navigate to **CORS Policy** and add the following rule, replacing the origin with your actual Deno Deploy URL:
-
-```json
-[
-  {
-    "AllowedOrigins": ["https://your-project.deno.dev"],
-    "AllowedMethods": ["GET"],
-    "AllowedHeaders": ["*"],
-    "ExposeHeaders": ["ETag"],
-    "MaxAgeSeconds": 3600
-  }
-]
-```
-
-**Why this is required:** The browser `<radio-player>` Web Component fetches both `manifest.json` and audio segments directly from R2 (cross-origin). Without this policy, all segment and manifest fetches are blocked by the browser's CORS enforcement. The `ExposeHeaders: ["ETag"]` entry is essential for the `If-None-Match` manifest polling optimisation to function correctly.
-
-**Note:** This is configured via the Cloudflare dashboard UI or the Cloudflare API — it cannot be set via the S3 API or `aws s3api put-bucket-cors`. The format above matches the Cloudflare R2 dashboard's CORS JSON input.
+6.  **Secure the Bucket:** Do not make the bucket natively public to avoid scraping. Instead, create a Cloudflare Worker that acts as a secure proxy for the bucket, validating HMAC tokens appended by the client (`?token=xyz`). The Deno SSR server generates these tokens. See [Architecture Decisions](../architecture/decisions.md) for details on the security token injection strategy.
+7.  **Configure CORS Policy:** In the Cloudflare Worker handling the bucket requests, ensure it returns appropriate CORS headers (`Access-Control-Allow-Origin: https://your-project.deno.dev`) to allow the browser client to fetch the segments directly.
 7.  Navigate to **R2 API Tokens** and create a new token.
     *   Permissions: **Object Read & Write**.
     *   Specific Bucket: Select your new bucket.
@@ -138,9 +123,9 @@ docker compose stop --timeout 30
 **What happens during shutdown:**
 1. Docker sends `SIGTERM` to the `radio` container.
 2. The Rust binary's shutdown handler catches the signal.
-3. The Recorder Task flushes and closes the current staging FLAC file, then copies it to `./recordings/` and deletes the staging copy. A direct `rename()` is not used because `/staging/` (tmpfs) and `./recordings/` (host-mounted volume) are different filesystems — the kernel returns `EXDEV` for cross-device renames. See [Graceful Shutdown](../radio-server/server.md) for the copy-then-delete implementation contract.
+3. The Recorder Task flushes and closes the current continuous FLAC archive file to disk.
 4. The Converter Task completes the current in-progress segment (or discards a partial one, logging its index).
 5. The Cloud Uploader Task completes the in-flight S3 `PUT` (with up to 3 retries), then writes a final `manifest.json` with `"live": false`.
 6. The binary exits cleanly.
 
-**If the server is killed with SIGKILL or crashes:** The staging file in `/staging/` (the tmpfs mount) is abandoned with a partial final frame. Because `/staging/` is an in-memory tmpfs, the file is lost entirely on container restart — it is not recoverable from disk. The archive rotation script should detect gaps in the timestamped filename sequence and log them.
+**If the server is killed with SIGKILL or crashes:** The current archive file on disk remains, although the final FLAC frame may be partial or truncated. No data previously written to disk is lost. The archive rotation script should detect gaps or truncations in the timestamped filename sequence and log them.

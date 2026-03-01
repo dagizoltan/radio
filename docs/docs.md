@@ -105,7 +105,7 @@ radio-stream/
 *   [Capture Crate](radio-server/capture.md): Pure Rust ALSA capture via `rustix` ioctls and `AsyncFd`.
 *   [Encoder Crate](radio-server/encoder.md): Verbatim FLAC encoder, frame structure, and `BitWriter`.
 *   [Server Crate](radio-server/server.md): Tokio task orchestration (Pipeline, Recorder, R2 Uploader, HTTP).
-*   [AWS Signature V4](radio-server/aws-sig-v4.md): From-scratch implementation for raw HTTP S3 uploads.
+*   [AWS Signature V4 & Cloud Uploading](radio-server/aws-sig-v4.md): Transitioning to robust standard crates like `object_store` from the custom SigV4 implementation.
 *   [Monitor UI](radio-server/monitor-ui.md): The embedded local operator interface (HTML/CSS/JS).
 
 ### Radio Client (Deno)
