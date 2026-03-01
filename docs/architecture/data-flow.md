@@ -50,10 +50,10 @@ The stream is chunked into discrete segments to enable low-latency HTTP delivery
 2.  **File Creation:** The Converter Task assembles each quality's accumulated data into a complete, standalone file: for HQ, by prepending the cached FLAC stream header (`fLaC` marker + `STREAMINFO` block) to the accumulated verbatim frames; for LQ, by prepending the Ogg Opus header pages to the accumulated Opus packets. The Uploader receives these as fully-formed, ready-to-upload byte payloads.
 3.  **Upload:** Segments are pushed to S3 with quality-namespaced, 8-digit zero-padded keys: `live/hq/segment-00000042.flac` for HQ FLAC and `live/lq/segment-00000042.opus` for LQ Opus.
 4.  **Manifest Update:** `live/manifest.json` is overwritten with the new latest segment index.
-5.  **Rolling Window:** The uploader maintains a queue of uploaded segment keys. If the window exceeds 3 segments, the oldest segment is explicitly deleted from S3 via a `DELETE` request.
+5.  **Rolling Window:** The uploader maintains a queue of uploaded segment keys. If the window exceeds 10 segments, the oldest segment is explicitly deleted from S3 via a `DELETE` request.
 6.  **Client Fetch:** Listeners fetch the `manifest.json` to find the live edge, then fetch the active segments sequentially.
 
-**CRITICAL CONSTRAINT:** Rolling window, not TTL. R2 has no native TTL. The uploader maintains a `VecDeque` of uploaded keys and deletes the oldest immediately when the window exceeds 3 segments. At any moment R2 holds exactly 3 segments and one manifest.
+**CRITICAL CONSTRAINT:** Rolling window, not TTL. R2 has no native TTL. The uploader maintains a `VecDeque` of uploaded keys and deletes the oldest immediately when the window exceeds 10 segments. At any moment R2 holds exactly 10 segments and one manifest.
 
 ### Segment Index Rollover
 

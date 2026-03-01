@@ -110,9 +110,11 @@ When the user clicks the "Play" button, the following sequence occurs:
     await Promise.all([initFlac(), initOpus()]);
 
     // Active decoder reference, swapped on quality change
-    let decoder = currentQuality === 'hq' ? new FlacDecoder() : new OpusDecoder();
+    const flacDecoder = new FlacDecoder();
+    const opusDecoder = new OpusDecoder();
+    let decoder = currentQuality === 'hq' ? flacDecoder : opusDecoder;
 
-    // On quality switch: call `decoder.free()` (WASM cleanup), send `"FLUSH"` to the worklet, then reassign `decoder = currentQuality === 'hq' ? new FlacDecoder() : new OpusDecoder()`.
+    // On quality switch: call `decoder.reset()`, send `"FLUSH"` to the worklet, then swap the `decoder` reference.
     ```
 7.  **Fetch Loop (`setInterval` / Web Worker):** Start the main fetch loop. Crucially, the fetch polling loop must **not** rely on `requestAnimationFrame` or `setTimeout` running on the main thread, because browsers heavily throttle (or pause entirely) background tabs. To keep audio playing smoothly while the listener browses other tabs, the fetch loop should be driven by a `setInterval` running in a dedicated Web Worker, which passes fetch commands or chunk events back to the main thread `MessagePort`.
 8.  **Waveform Animation Loop:** The visual waveform updates independently using `requestAnimationFrame`. When the tab is backgrounded, it correctly pauses rendering to save battery, but the separate Web Worker continues fetching audio chunks.
@@ -141,7 +143,7 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   Get a `ReadableStreamDefaultReader` from the response body.
     *   Loop `reader.read()`. As each `Uint8Array` chunk arrives:
         *   Pass the chunk to the WASM decoder: `const pcm = decoder.push(chunk)`.
-        *   If `pcm` (an `Float32Array`) has length > 0, post it to the worklet: `workletNode.port.postMessage(pcm, [pcm.buffer])` (transferring ownership for performance).
+        *   If `pcm` (a `Float32Array`) has length > 0, post it to the worklet: `workletNode.port.postMessage(pcm.slice())`. **CRITICAL:** Use `.slice()` to copy the data. Do NOT transfer `pcm.buffer` via `[pcm.buffer]` as transferable objects. `pcm.buffer` is the WASM instance's linear memory. Transferring it detaches the memory buffer, instantly crashing the WASM decoder.
 5.  **Quality Switching:** If the user changes the quality mid-stream:
     *   The current `reader.cancel()` is called.
     *   A `"FLUSH"` message is sent to the `AudioWorklet` via `postMessage` to instantly clear any buffered PCM data. This prevents an audible pitch-shift or pop when the new codec chunks arrive.

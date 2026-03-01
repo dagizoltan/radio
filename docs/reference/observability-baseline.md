@@ -13,7 +13,7 @@ This document defines healthy operating ranges and alarm thresholds for all tele
 | S3 PUT latency (HQ) | Uploader Task | < 3s | > 8s | Time for a single `PUT` of ~2.88 MB. If consistently > 8s, upload is slower than segment production. |
 | S3 PUT latency (LQ) | Uploader Task | < 0.5s | > 3s | LQ Opus segments range 100–220 KB (VBR). Even at the upper bound, upload should complete well under 1 second on a 10 Mbps connection. |
 | S3 PUT retry rate | Uploader Task | 0 retries / hour | > 3 retries / hour | Frequent retries indicate network instability or R2 availability issues. |
-| Rolling window size | Uploader Task | exactly 3 | ≠ 3 | Should always be exactly 3 segments on R2. More = leak; fewer = startup or delete failure. |
+| Rolling window size | Uploader Task | exactly 10 | ≠ 10 | Should always be exactly 10 segments on R2. More = leak; fewer = startup or delete failure. |
 | Manifest age (seconds since `updated_at`) | Uploader Task | < 15s | > 40s | Manifest should update every 10s. Staleness > 40s means the uploader has stalled. |
 
 ## Client Metrics (Reported to Analytics Endpoint)

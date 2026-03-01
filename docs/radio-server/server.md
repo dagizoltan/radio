@@ -65,7 +65,7 @@ On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values
 
 **Frame size constraint:** The Opus encoder must be initialized with a frame size of `960` samples. Do not use other valid Opus frame sizes (480, 2880, etc.) — 960 (20ms at 48kHz) is the standard and produces the best quality/latency balance for this use case.
 
-**Segment boundary:** When the 480,000-frame threshold is reached and a segment is finalized, flush `opus_staging` by padding the remaining samples with silence up to the next full 960-frame boundary before writing the final Ogg page. Log the number of silence-padded samples (always fewer than 960 frames = 1920 samples). Reset `opus_staging` to empty for the next segment.
+**Segment boundary:** When the 480,000-frame threshold is reached and a segment is finalized, flush `opus_staging` by passing the exact number of remaining frames directly to the encoder. **Do not** pad with silence, as this will introduce an audible click at the end of every LQ segment. Let the encoder finalize the Ogg granule position correctly for the truncated packet. Reset `opus_staging` to empty for the next segment.
 
 3.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames. For each received period:
     *   **HQ FLAC path:** `encode_frame()` receives a `&[i32]` borrow of the `Arc` contents directly. Zero copy, zero allocation.
@@ -113,7 +113,7 @@ Receives completed segments and handles S3 uploads and manifest management.
 
     **Manifest retry:** The manifest `PUT` uses the same exponential backoff. If the manifest `PUT` fails after all retries, log `ERROR: manifest update failed for segment {index}`. The segment data is already uploaded to R2 (the segment `PUT` succeeded). The `latest` pointer in the manifest simply does not advance. On the next segment cycle, the manifest will be overwritten with the new `latest`. Clients experiencing a stale manifest will detect it via the `updated_at` staleness check (`Date.now() - updated_at > segment_s * 3 * 1000`) and show "Stream may be offline."
 
-5.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 3 segments per quality, it issues `DELETE` requests for the oldest objects.
+5.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 10 segments per quality, it issues `DELETE` requests for the oldest objects. A 10-segment window is strictly required to prevent intermittent 404 errors for clients recovering from lag or fetching immediately after a manifest update.
 6.  Pushes the new HQ segment into `local_segments` (keeping only the last 3) for the local operator monitor playback.
 7.  Updates `r2_segment`, `r2_last_ms`, and `r2_uploading`. Emits `r2` status events to `sse_tx` during and after the upload.
 
@@ -132,7 +132,7 @@ Serves the local monitor UI on `127.0.0.1:8080` using `axum`.
 
 **CRITICAL CONSTRAINT:** Two dedicated audio `mpsc` channels, not broadcast. Raw PCM flows Recorder→Converter via `mpsc(16)`. Assembled segments flow Converter→Uploader via `mpsc(3)`. The `broadcast` channel carries only SSE event bus messages.
 
-**CRITICAL CONSTRAINT:** Rolling window, not TTL. R2 has no native TTL. The uploader maintains a VecDeque of uploaded keys and deletes the oldest immediately when the window exceeds 3 segments. At any moment R2 holds exactly 3 segments and one manifest.
+**CRITICAL CONSTRAINT:** Rolling window, not TTL. R2 has no native TTL. The uploader maintains a VecDeque of uploaded keys and deletes the oldest immediately when the window exceeds 10 segments. At any moment R2 holds exactly 10 segments and one manifest.
 
 **CRITICAL CONSTRAINT:** Segments are complete FLAC files. Every segment uploaded to R2 must be playable as a standalone FLAC file.
 ### Graceful Shutdown Contract
@@ -167,7 +167,7 @@ tokio::fs::remove_file(&staging_path).await?;
 Log the final archive path and size after `copy` completes. If `copy` fails (e.g., disk full on host), log `ERROR` and retain the staging file — it will be lost on container restart, so emit an alarm-level SSE event.
 4. Log the final archive file path and size.
 
-**Converter Task shutdown:** Drop the in-progress partial segment (log its incomplete frame count). Do not forward a partial segment to the Uploader via the mpsc channel.
+**Converter Task shutdown:** Drop the in-progress partial segment (log its incomplete frame count). Do not forward a partial segment to the Uploader via the mpsc channel. **CRITICAL:** Explicitly drop the `mpsc::Sender` instance targeting the Uploader Task when the Converter exits. This ensures the Uploader's `recv()` call wakes up and returns `None`, allowing it to perform its own graceful shutdown without deadlocking.
 
 **Cloud Uploader Task shutdown:**
 1. Complete any in-flight `PUT` request (do not cancel mid-upload — would create a partial S3 object).
