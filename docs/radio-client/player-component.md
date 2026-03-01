@@ -223,10 +223,31 @@ navigator.mediaSession.setActionHandler("pause", () => {
 ```
 Note: Calling `audioCtx.suspend()` from the MediaSession `pause` handler pauses audio output cleanly. The fetch worker should continue fetching during a MediaSession pause to avoid re-buffering delay on resume. The ring buffer absorbs the incoming audio silently while the context is suspended.
 
+**Stale buffer on MediaSession resume:**
+
+When the user resumes via a MediaSession action (e.g., lock screen play button or headphone control), the ring buffer may contain audio that was buffered during the pause. Unlike the `visibilitychange` path, this is an explicit user-initiated resume — the expectation is immediate live audio, not continuation from the pause point.
+
+```javascript
+navigator.mediaSession.setActionHandler("play", () => {
+  audioCtx.resume();
+  fetchWorker.postMessage({ type: "RESUME" });
+
+  // Check buffer depth; flush stale audio if the pause was long
+  workletNode.port.postMessage({ type: "QUERY_DEPTH" });
+  // Response handled in workletNode.port.onmessage (DEPTH_RESPONSE)
+  // Same flush + jump-to-latest logic as the visibilitychange handler
+});
+```
+
+The `DEPTH_RESPONSE` handler in `workletNode.port.onmessage` is already defined for the `visibilitychange` case. It applies identically here: if `samplesAvailable > 48000 * 15` (more than 15 seconds buffered), send `"FLUSH"` to the worklet and post `{ type: "JUMP_TO_LATEST" }` to the fetch worker.
+
+**Threshold rationale:** 15 seconds corresponds to roughly 1.5 segments. Any pause long enough to buffer more than 1.5 segments means the listener would resume noticeably behind the live edge. Below this threshold (e.g., a 5-second pause), resuming from the buffer is preferable to discarding buffered audio and incurring a re-buffer delay.
+
 ### Cross-Platform Compatibility
 
 | Platform | Known Issue | Mitigation |
 |---|---|---|
+| All platforms | MediaSession resume after long pause plays stale buffered audio | `QUERY_DEPTH` on every MediaSession play action; flush + jump if > 15s buffered |
 | iOS Safari 14.5+ | `audioCtx.resume()` must be synchronous within gesture handler | Call `resume()` before any `await` in the click handler (see above) |
 | iOS Safari < 14.5 | `AudioWorklet` not supported | Detect with `"audioWorklet" in AudioContext.prototype`; show "Browser not supported" message |
 | Chrome Android | `AudioContext` auto-suspends on tab hide | Handled by `visibilitychange` handler above |

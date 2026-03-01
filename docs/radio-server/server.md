@@ -27,7 +27,7 @@ Handles direct hardware capture and local uncompressed archiving.
 
 1.  Opens the ALSA capture device using the [Capture Crate](capture.md).
 2.  Initializes a high-quality (HQ) `FlacEncoder` instance for raw encoding.
-3.  Creates a new, timestamped staging file in a fast, local container directory (e.g., `/tmp/` or a `tmpfs` mount) to prevent the capture loop from blocking on slow host-mounted filesystems (especially relevant if a developer runs this on Docker Desktop for Mac/Windows).
+3.  Creates a new, timestamped staging file at `/staging/recording-{timestamp}.flac.tmp`. The `/staging` directory is a `tmpfs` mount (see Docker Compose config), ensuring all writes are to RAM and never hit the container's overlayfs. This prevents the high-throughput archive write path (~1.5 GB/hour) from causing overlayfs write amplification.
 4.  Enters an asynchronous loop, awaiting periods from the capture device.
 5.  **For each period (4096 frames):**
     *   Computes the peak absolute sample value for the left and right channels for the UI. Updates `vu_left` and `vu_right`.
@@ -35,24 +35,43 @@ Handles direct hardware capture and local uncompressed archiving.
     *   Writes the frames directly to the staging archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
     *   Sends the raw PCM period as `Arc<Vec<i32>>` via a bounded `tokio::sync::mpsc` channel (capacity 16) to the Converter Task. The FLAC encoding above is written to the archive only — the Converter receives raw PCM directly and never sees the FLAC-encoded bytes.
     *   Emits VU levels to `sse_tx`.
-6.  **Archiving:** Periodically (e.g., every 60 minutes) or on graceful shutdown, it flushes the current staging file, closes the handle, and asynchronously moves it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue.
+6.  **Archiving:** Periodically (every 10 minutes or on graceful shutdown), it flushes the current staging file, closes the handle, and asynchronously moves it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue.
 
 ### Process 2: Converter Task
 
-Consumes the raw stream, normalizes it, and encodes it into multiple qualities (HQ and LQ).
+Consumes the raw stream and encodes it into multiple qualities (HQ and LQ).
 
 1.  Receives from the bounded `mpsc` channel. The `broadcast` channel carries only JSON event strings for the monitor UI SSE feed. Shutdown is coordinated via a cancellation token, not via the broadcast channel.
-2.  Initializes the `Normalizer`.
-3.  Initializes the audio encoders: one `FlacEncoder` for the normalized HQ stream (24-bit), and one Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`) with an `ogg::PacketWriter` for container framing. Before encoding, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets; the Ogg writer accumulates them into pages. Each 10-second segment is assembled as a complete, self-contained Ogg Opus stream (includes the two header pages prepended).
-4.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames. No decoding step is required — the PCM arrives ready for normalisation.
-5.  Copies the raw buffer to a new mutable buffer and calls `normalizer.process(&mut buffer)`.
-6.  Encodes the normalized buffer simultaneously into the respective HQ (FLAC) and LQ (Opus) streams.
-7.  Emits the current normalizer gain to `sse_tx` every 50ms using a `tokio::time::interval`.
-8.  **Segment Assembly:** Accumulates the encoded frames for both qualities.
+2.  Initializes the audio encoders: one `FlacEncoder` for the HQ stream (24-bit), and one Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`) with an `ogg::PacketWriter` for container framing. Before encoding for Opus, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets; the Ogg writer accumulates them into pages. Each 10-second segment is assembled as a complete, self-contained Ogg Opus stream (includes the two header pages prepended).
+
+**Opus PCM Staging Buffer**
+
+Before any samples are passed to the Opus encoder, they must be staged through an internal PCM buffer local to the Converter Task:
+
+```
+opus_staging: Vec<i32>  // interleaved stereo, pre-allocated with capacity 960 * 2
+```
+
+On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values):
+1. Append all samples from the received `Arc<Vec<i32>>` into `opus_staging`.
+2. While `opus_staging.len() >= 1920` (960 frames × 2 channels):
+   - Drain the first 1920 samples from `opus_staging`.
+   - Convert the drained `i32` samples to `f32` (divide by `8388608.0` for 24-bit).
+   - Pass the 1920-sample `f32` slice to `opus_encoder.encode_float()`.
+   - Accumulate the resulting Opus packet into the current segment's Ogg writer.
+3. Leftover samples (at most 1919) remain in `opus_staging` for the next period.
+
+**Frame size constraint:** The Opus encoder must be initialized with a frame size of `960` samples. Do not use other valid Opus frame sizes (480, 2880, etc.) — 960 (20ms at 48kHz) is the standard and produces the best quality/latency balance for this use case.
+
+**Segment boundary:** When the 480,000-frame threshold is reached and a segment is finalized, flush `opus_staging` by padding the remaining samples with silence up to the next full 960-frame boundary before writing the final Ogg page. Log the number of silence-padded samples (always fewer than 960 frames = 1920 samples). Reset `opus_staging` to empty for the next segment.
+
+3.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames.
+4.  The Converter receives the raw PCM period as `Arc<Vec<i32>>` and passes it directly to the HQ FLAC encoder and the Opus encoder. No copy is made. The buffer is not mutated.
+5.  **Segment Assembly:** Accumulates the encoded frames for both qualities.
     *   *Optimization Strategy:* To prevent constant vector reallocations as frames accumulate, the accumulator `Vec<u8>` for the 10-second segment must be pre-allocated with `Vec::with_capacity()`. A 10-second 24-bit verbatim FLAC segment contains the raw PCM payload (`48000 * 3 bytes * 2 channels * 10s = 2,880,000` bytes) plus the FLAC framing overhead. A 10s segment has ~117 FLAC frames, each contributing a frame header (~10-15 bytes) and a CRC-16 (2 bytes), adding around ~1,700 bytes. To ensure zero reallocations, the buffer must be padded slightly larger than just the PCM size.
     *   **Threshold:** 480,000 frames (10 × 48000 Hz). Track a `frame_counter: u64` incremented by `period_frames` (4096) per ALSA period. Pre-allocate accumulator: `Vec::with_capacity(2_885_000)` for HQ (PCM + framing overhead padding).
     *   Assembles complete, standalone files in memory by prepending the respective stream headers to the filled accumulator.
-    *   Sends completed HQ and LQ segment files to the Cloud Uploader via a bounded `tokio::sync::mpsc` channel with capacity **3**. If the channel is full (Uploader lagging), the Converter logs `WARN: uploader lagging, oldest segment dropped` and the channel's back-pressure causes the send to fail gracefully.
+    *   Sends completed HQ and LQ segment files to the Cloud Uploader via a bounded `tokio::sync::mpsc` channel with capacity **3**. Uses `try_send()` (non-blocking). If the channel is full, logs `WARN: segment {index} dropped — uploader lagging` and discards the segment. Never blocks waiting for the Uploader.
 
 ### Process 3: Cloud Uploader Task
 
@@ -75,7 +94,20 @@ Receives completed segments and handles S3 uploads and manifest management.
     *   **Resilience:** Uses an exponential backoff retry loop (e.g., 3-5 retries) for the HTTP PUT requests to handle transient network drops.
     *   Key format uses quality folders: e.g., `live/hq/segment-{:08}.flac` and `live/lq/segment-{:08}.opus`.
     *   Writes `live/manifest.json` containing metadata for both streams: `{"live": true, "latest": index, "segment_s": 10, "updated_at": timestamp, "qualities": ["hq", "lq"]}`.
-    *   **Crucial Caching Instruction:** The `PUT` request for `manifest.json` **must** include the `Cache-Control: no-cache, no-store, must-revalidate` metadata explicitly. This prevents aggressive edge caching by Cloudflare R2 (or an upstream CDN), ensuring the browser receives `304 Not Modified` *only* via the backend ETag mechanism, preventing the stream from "ghosting" or appearing offline while still actively uploading.
+    *   **Crucial Caching Instruction:** The `PUT` request for `manifest.json` **must** include the `Cache-Control: no-store, max-age=0` metadata explicitly. Although `no-cache` would allow ETag-based revalidation, clients implement ETag tracking manually in JavaScript memory and fetch directly from R2. `no-store` is used to ensure no intermediate CDN layer retains any copy of the manifest.
+
+    **Retry exhaustion:** If all retries are exhausted for a segment `PUT`:
+    1. Log `ERROR: segment {index} upload failed after {n} retries — skipping`.
+    2. Discard the segment bytes from memory.
+    3. Do **not** update the manifest. The `latest` index does not advance for the failed segment.
+    4. Do **not** update the rolling window queue — the failed segment was never successfully stored on R2, so there is nothing to delete.
+    5. Continue processing the next segment received from the Converter channel.
+    6. Emit an `r2` SSE event with `{ "uploading": false, "segment": index, "last_ms": <last_successful_ms>, "error": true }` so the monitor UI can surface the failure.
+
+    **Client behavior under skipped indices:** The client's jump-ahead logic already handles gaps. If `latest` jumps by 2 (a segment was skipped), the client detects `currentIndex < latest - 3` and snaps to `latest - 1`. No client-side changes are needed.
+
+    **Manifest retry:** The manifest `PUT` uses the same exponential backoff. If the manifest `PUT` fails after all retries, log `ERROR: manifest update failed for segment {index}`. The segment data is already uploaded to R2 (the segment `PUT` succeeded). The `latest` pointer in the manifest simply does not advance. On the next segment cycle, the manifest will be overwritten with the new `latest`. Clients experiencing a stale manifest will detect it via the `updated_at` staleness check (`Date.now() - updated_at > segment_s * 3 * 1000`) and show "Stream may be offline."
+
 5.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 3 segments per quality, it issues `DELETE` requests for the oldest objects.
 6.  Pushes the new HQ segment into `local_segments` (keeping only the last 3) for the local operator monitor playback.
 7.  Updates `r2_segment`, `r2_last_ms`, and `r2_uploading`. Emits `r2` status events to `sse_tx` during and after the upload.
@@ -93,7 +125,7 @@ Serves the local monitor UI on `127.0.0.1:8080` using `axum`.
 
 ## Critical Constraints
 
-**CRITICAL CONSTRAINT:** Two dedicated audio `mpsc` channels, not broadcast. Raw PCM flows Recorder→Converter via `mpsc(16)`. Assembled segments flow Converter→Uploader via `mpsc(3)`. The `broadcast` channel carries only SSE event bus messages. The local archive must be completely unprocessed — the normalizer must never touch the recorded audio.
+**CRITICAL CONSTRAINT:** Two dedicated audio `mpsc` channels, not broadcast. Raw PCM flows Recorder→Converter via `mpsc(16)`. Assembled segments flow Converter→Uploader via `mpsc(3)`. The `broadcast` channel carries only SSE event bus messages.
 
 **CRITICAL CONSTRAINT:** Rolling window, not TTL. R2 has no native TTL. The uploader maintains a VecDeque of uploaded keys and deletes the oldest immediately when the window exceeds 3 segments. At any moment R2 holds exactly 3 segments and one manifest.
 
@@ -119,7 +151,15 @@ When the shutdown signal fires, the cancellation token is cancelled. Each task m
 **Recorder Task shutdown:**
 1. Stop reading new periods from ALSA.
 2. Flush and close the current staging FLAC file (write any buffered bytes, fsync).
-3. Move the staging file to `./recordings/` via `tokio::fs::rename`.
+3. Move the staging file to `./recordings/`. The `tmpfs` mount is ephemeral — it does not survive container restart. The `rename()` from `/staging/` to `./recordings/` (host-mounted volume) is therefore a **cross-device move**, which the kernel cannot perform atomically. Replace the `tokio::fs::rename` call with a copy-then-delete sequence:
+
+```rust
+// Cross-device move: tmpfs → host volume
+tokio::fs::copy(&staging_path, &final_path).await?;
+tokio::fs::remove_file(&staging_path).await?;
+```
+
+Log the final archive path and size after `copy` completes. If `copy` fails (e.g., disk full on host), log `ERROR` and retain the staging file — it will be lost on container restart, so emit an alarm-level SSE event.
 4. Log the final archive file path and size.
 
 **Converter Task shutdown:** Drop the in-progress partial segment (log its incomplete frame count). Do not forward a partial segment to the Uploader via the mpsc channel.

@@ -25,6 +25,10 @@ It exposes two methods:
 
 **Contract:** `encode_frame` must perform zero allocations in the hot path. The returned slice is valid until the next call.
 
+**Frame counter continuity:** The `FlacEncoder` instance used by the Converter Task is **reused across segments** — it is created once at Converter startup and lives for the process lifetime. The internal frame counter increments monotonically. Each 10-second segment assembled by prepending the cached stream header to accumulated frames will therefore contain frames with non-zero frame numbers. This is valid per the FLAC specification; frame numbers are used for seeking, not for standalone-file validity. The `STREAMINFO` block's `total_samples` field is set to `0` (streaming/unknown), which is also valid.
+
+**Do not** create a new `FlacEncoder` per segment. Doing so would reset the frame counter to 0 on every segment, producing duplicate frame numbers across the stream if a player were to concatenate segments — a minor compliance issue with no practical impact, but unnecessary.
+
 ## Verbatim Subframe Layout
 
 Each FLAC frame encodes one block of audio (4096 frames). It contains:

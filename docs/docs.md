@@ -20,7 +20,7 @@ This system captures analog audio from a vinyl turntable (via a Behringer UMC404
 |  |  [ Capture ] -> [ Raw Encoder ] -> [ Local Archive ]|  |
 |  |       |                                             |  |
 |  |       v                                             |  |
-|  |  [ Normalizer ] -> [ Encoder ] -> [ R2 Uploader ]   |  |
+|  |  [ Converter ] -> [ Encoder ] -> [ R2 Uploader ]    |  |
 |  |                                                     |  |
 |  |  [ HTTP/SSE Monitor UI ]                            |  |
 |  +-----------------------------------------------------+  |
@@ -78,7 +78,6 @@ radio-stream/
 │   ├── crates/
 │   │   ├── capture/
 │   │   ├── encoder/
-│   │   ├── normalizer/
 │   │   └── server/
 │   └── Dockerfile
 └── radio-client/
@@ -105,7 +104,6 @@ radio-stream/
 *   [Overview](radio-server/overview.md): Crate workspace layout, dependency graph, and shared `AppState`.
 *   [Capture Crate](radio-server/capture.md): Pure Rust ALSA capture via `rustix` ioctls and `AsyncFd`.
 *   [Encoder Crate](radio-server/encoder.md): Verbatim FLAC encoder, frame structure, and `BitWriter`.
-*   [Normalizer Crate](radio-server/normalizer.md): Two-stage LUFS gain rider and true-peak limiter.
 *   [Server Crate](radio-server/server.md): Tokio task orchestration (Pipeline, Recorder, R2 Uploader, HTTP).
 *   [AWS Signature V4](radio-server/aws-sig-v4.md): From-scratch implementation for raw HTTP S3 uploads.
 *   [Monitor UI](radio-server/monitor-ui.md): The embedded local operator interface (HTML/CSS/JS).
@@ -138,7 +136,7 @@ radio-stream/
 The system design enforces several strict rules outlined below. Violating these constraints breaks the core archival and performance guarantees of the system.
 
 1.  **No C bindings in capture**: The [Capture Crate](radio-server/capture.md) must not link against `libasound`. All interaction is via raw kernel ioctls.
-2.  **Separate channels for audio and control**: The Server Pipeline uses two bounded `tokio::sync::mpsc` channels for audio data (raw PCM from Recorder to Converter, and assembled segments from Converter to Uploader). A single `tokio::sync::broadcast` channel is used exclusively for the SSE event bus. The Normalizer must never touch the recorded audio.
+2.  **Separate channels for audio and control**: The Server Pipeline uses two bounded `tokio::sync::mpsc` channels for audio data (raw PCM from Recorder to Converter, and assembled segments from Converter to Uploader). A single `tokio::sync::broadcast` channel is used exclusively for the SSE event bus.
 3.  **Rolling window, not TTL**: R2 does not have reliable instant TTL. The [R2 Uploader Task](radio-server/server.md) maintains exactly 3 segments, actively deleting older keys.
 4.  **Segments are complete FLAC files**: Every segment uploaded to R2 must contain the full FLAC stream header and be playable as a standalone file, as described in the [Encoder Spec](radio-server/encoder.md).
 5.  **WASM decoder is minimal**: The [WASM Decoder](radio-client/wasm-decoder.md) only parses verbatim subframes matching our specific block size/rate encoding (24-bit). It does not implement full FLAC.

@@ -9,14 +9,13 @@ This document traces the lifecycle of an audio sample through the Lossless Vinyl
 3.  **Capture (Rust - Process 1 HQ Recorder):** The [Capture Crate](./radio-server/capture.md) reads the audio frames from the ALSA device file into an interleaved `&mut [i32]` buffer via raw kernel `ioctl`s.
 4.  **Raw Encoder (Process 1 HQ Recorder):** A raw FLAC [Encoder](./radio-server/encoder.md) takes the interleaved samples and produces raw verbatim HQ FLAC frames. The Recorder task writes them directly to the local archive.
 5.  **Raw PCM Channel Send:** The raw PCM samples (interleaved `i32`, one period of 4096 frames) are cloned and sent to the Converter Task over a bounded `tokio::sync::mpsc` channel (capacity 16). The channel carries raw PCM, not encoded FLAC — the Recorder encodes to FLAC for its own archive write independently. This avoids any FLAC decode step in the Converter's hot path.
-6.  **Normalization (Process 2 Converter):** The conversion process receives the raw buffer and passes it to the [Normalizer](./radio-server/normalizer.md), which applies LUFS gain riding and true-peak limiting in-place.
-7.  **Multi-Quality Encode (Process 2 Converter):** The normalized samples are encoded into an HQ normalized verbatim FLAC stream, and encoded into a Lower Quality (LQ) Opus stream (128 kbps stereo, wrapped in an Ogg container) for lower bandwidth listeners. The Opus codec achieves perceptual transparency at 128 kbps while consuming roughly half the bandwidth of the verbatim HQ FLAC stream.
-8.  **Segment Assembly & Broadcast:** The Converter task accumulates frames into 10-second segments, assembling complete standalone files (FLAC for HQ, Opus for LQ) in memory. It sends these assembled segments to the Cloud Uploader Task via a bounded `mpsc` channel (capacity 3).
-9.  **S3 Upload (Process 3 Cloud Uploader):** The Uploader process receives the completed segments and pushes both the HQ and LQ files to S3 (MinIO or R2) via raw HTTP using [AWS Signature V4](./radio-server/aws-sig-v4.md), employing exponential backoff retries for resilience. The `manifest.json` is updated to point to both streams.
-10. **Direct Segment Fetch:** The `radio-player` Web Component in the browser uses the manifest data to fetch the segment *directly* from the S3/R2 CDN edge (bypassing the Deno proxy to save bandwidth).
-11. **Browser Decode:** The browser fetches the segment chunk-by-chunk using a `ReadableStream`. Each chunk is passed to the [WASM Decoder](./radio-client/wasm-decoder.md), which parses either the FLAC or Opus stream (depending on user selection) and yields `f32` PCM data.
-12. **AudioWorklet Queue:** The `f32` PCM data is posted via `MessagePort` to the [AudioWorklet](./radio-client/worklet.md), which appends it to an internal ring buffer queue.
-13. **Playback:** The `AudioWorkletProcessor` pulls 128 frames at a time from its queue, applies volume scaling, and outputs the stereo signal to the browser's audio destination, where it is finally converted back to analog by the listener's DAC and sent to the speakers.
+6.  **Multi-Quality Encode (Process 2 Converter):** The raw PCM samples received from the Recorder are encoded directly into an HQ verbatim FLAC stream and an LQ Opus stream (128 kbps stereo, Ogg container).
+7.  **Segment Assembly & Broadcast:** The Converter task accumulates frames into 10-second segments, assembling complete standalone files (FLAC for HQ, Opus for LQ) in memory. The LQ Opus stream uses an internal 960-sample staging buffer in the Converter Task to align ALSA periods (4096 frames) to valid Opus frame boundaries (960 frames at 20ms). Fewer than 960 frames of silence padding may be appended at segment boundaries. It sends these assembled segments to the Cloud Uploader Task via a bounded `mpsc` channel (capacity 3).
+8.  **S3 Upload (Process 3 Cloud Uploader):** The Uploader process receives the completed segments and pushes both the HQ and LQ files to S3 (MinIO or R2) via raw HTTP using [AWS Signature V4](./radio-server/aws-sig-v4.md), employing exponential backoff retries for resilience. The `manifest.json` is updated to point to both streams.
+9.  **Direct Segment Fetch:** The `radio-player` Web Component in the browser uses the manifest data to fetch the segment *directly* from the S3/R2 CDN edge (bypassing the Deno proxy to save bandwidth).
+10. **Browser Decode:** The browser fetches the segment chunk-by-chunk using a `ReadableStream`. Each chunk is passed to the [WASM Decoder](./radio-client/wasm-decoder.md), which parses either the FLAC or Opus stream (depending on user selection) and yields `f32` PCM data.
+11. **AudioWorklet Queue:** The `f32` PCM data is posted via `MessagePort` to the [AudioWorklet](./radio-client/worklet.md), which appends it to an internal ring buffer queue.
+12. **Playback:** The `AudioWorkletProcessor` pulls 128 frames at a time from its queue, applies volume scaling, and outputs the stereo signal to the browser's audio destination, where it is finally converted back to analog by the listener's DAC and sent to the speakers.
 
 ## Two-Channel Pipeline Design
 
@@ -26,14 +25,14 @@ The `radio-server` audio pipeline uses two dedicated `tokio::sync::mpsc` channel
 - **Producer:** The Recorder Task (sole ALSA reader).
 - **Consumer:** The Converter Task (sole receiver).
 - **Payload:** Raw interleaved PCM samples — `Arc<Vec<i32>>` or equivalent, one period (4096 frames) per message.
-- **Why PCM, not FLAC:** The Recorder encodes the same PCM buffer to FLAC independently for the archive write. Sending PCM to the Converter means the Converter can normalise and re-encode to HQ FLAC and Opus directly, without a FLAC decode step in the hot path.
-- **Back-pressure:** If the Converter falls behind (CPU-bound normalisation spike), the bounded channel causes the Recorder's `send()` to return `Err`. The Recorder logs the drop and continues — one dropped period means ~85ms of silence in the archive, which is preferable to unbounded RAM growth.
+- **Why PCM, not FLAC:** The Recorder encodes the same PCM buffer to FLAC independently for the archive write. Sending PCM to the Converter means the Converter can re-encode to HQ FLAC and Opus directly, without a FLAC decode step in the hot path.
+- **Back-pressure:** If the Converter falls behind, the bounded channel causes the Recorder's `send()` to return `Err`. The Recorder logs the drop and continues — one dropped period means ~85ms of silence in the archive, which is preferable to unbounded RAM growth.
 
 ### Segment Channel (`mpsc`, capacity 3)
 - **Producer:** The Converter Task.
 - **Consumer:** The Cloud Uploader Task (sole receiver).
 - **Payload:** Completed 10-second segment files — `(SegmentIndex, HqBytes, LqBytes)`.
-- **Back-pressure:** If the Uploader is behind (R2 slow or retrying), the bounded channel blocks the Converter. At capacity 3, the Converter can buffer ~30 seconds of segments in RAM (~9 MB) before applying back-pressure. This is the documented maximum RAM spike.
+- **Back-pressure:** If the Uploader is behind, `try_send()` returns `Err` immediately. The Converter logs the dropped segment index and continues. The Recorder is never stalled by Uploader lag.
 
 ### SSE Event Bus (`broadcast`)
 - **Producer:** Any task.
@@ -41,7 +40,7 @@ The `radio-server` audio pipeline uses two dedicated `tokio::sync::mpsc` channel
 - **Payload:** JSON event strings (status, VU levels, gain, recording info, R2 upload status).
 - **Drop policy:** `RecvError::Lagged` from the broadcast channel is benign here — a monitor UI client that falls behind simply misses a VU meter update, not audio data.
 
-**CRITICAL CONSTRAINT:** The normalizer must never touch the recorded audio. The Recorder encodes raw PCM to FLAC and writes it to the archive before the PCM is sent to the Converter. The Converter's normalisation operates on a separate copy of the PCM buffer.
+**CRITICAL CONSTRAINT:** The Recorder encodes raw PCM to FLAC and writes it to the archive independently before forwarding PCM.
 
 ## Segment Lifecycle
 

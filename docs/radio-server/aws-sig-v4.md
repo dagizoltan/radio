@@ -28,6 +28,36 @@ The HTTP request is normalized into a "Canonical Request" string.
 
 **Clock Skew Mitigation:** R2 rejects requests where the `x-amz-date` and `RequestDateTime` deviate from the server's time by more than 5 minutes. To mitigate host clock drift without relying exclusively on NTP, the S3 Uploader Task should periodically fetch the `Date` header from an R2 response (e.g., via a `HEAD` request or by interpreting the headers of a failed `PUT`) to calculate a "clock skew" offset relative to the local system clock. This calculated offset must be added to the current system time when generating the `x-amz-date` and `RequestDateTime` fields.
 
+**403 Error Classification:**
+
+R2 returns `403 Forbidden` for two distinct failure modes that must not be conflated:
+
+| R2 Error Code (XML body) | Cause | Recovery |
+|---|---|---|
+| `RequestTimeTooSkewed` | Clock drift > 5 minutes | Parse the `Date` header from the 403 response, compute skew offset, adjust `x-amz-date` on retry |
+| `InvalidAccessKeyId` | Wrong or revoked access key | Do not retry. Log `FATAL: R2 credentials invalid`. Emit `status: { live: false }` SSE. Halt the Uploader Task. |
+| `SignatureDoesNotMatch` | Signing bug or corrupted secret key | Do not retry. Log `FATAL: R2 signature mismatch — check R2_SECRET_KEY`. Halt. |
+
+**Implementation:** After receiving a 403 response, parse the XML body to extract the `<Code>` element before deciding whether to retry:
+
+```rust
+// Pseudocode — parse R2 403 response body
+if response.status() == 403 {
+    let body = response.text().await?;
+    if body.contains("<Code>RequestTimeTooSkewed</Code>") {
+        // Extract server time from response Date header, compute skew, retry once
+        let server_time = parse_date_header(&response);
+        self.clock_skew_offset = server_time - SystemTime::now();
+        // retry the request with adjusted timestamp
+    } else {
+        // Credential or signing error — fatal, do not retry
+        tracing::error!("R2 auth failure: {}", extract_code(&body));
+        cancellation_token.cancel();
+        return Err(...);
+    }
+}
+```
+
 ```text
 HTTPRequestMethod
 CanonicalURI

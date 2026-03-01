@@ -79,4 +79,4 @@ Verify that the uncompressed, raw archive is being written to disk. The `radio` 
 ls -la ./recordings
 ```
 
-You should see a continuously growing FLAC file with a timestamped filename. The normalizer never touches the recorded audio stored in this directory.
+You should see a continuously growing FLAC file with a timestamped filename.

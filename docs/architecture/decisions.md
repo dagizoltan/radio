@@ -9,12 +9,12 @@ The [Capture Crate](../radio-server/capture.md) interacts directly with the Linu
 *   **Rationale:** Eliminating C dependencies simplifies the build process, cross-compilation, and runtime environment. It removes an entire class of potential linking issues and segfaults. By using `rustix` for safe, zero-cost syscall wrappers, we achieve direct kernel communication in pure Rust, ensuring memory safety and deterministic behavior.
 *   **Constraint:** No C bindings in capture. The capture crate must not link against `libasound` or any C audio library.
 
-## Why separate channels for raw and normalized audio?
+## Why separate channels for raw PCM and assembled segments?
 
 The server pipeline uses two dedicated `tokio::sync::mpsc` channels for audio data — one from the Recorder to the Converter, one from the Converter to the Uploader — plus a single `tokio::sync::broadcast` channel used exclusively for the SSE event bus.
 
-- **Rationale:** The local archive must be a pristine, unprocessed bit-for-bit copy of the analog capture. The stream sent to listeners must be normalized for consistent loudness. By using separate channels with the Recorder as the sole ALSA reader, we guarantee the Normalizer never touches the archived audio. The Recorder encodes raw PCM to FLAC for the archive independently, then sends the same raw PCM to the Converter. The Converter clones it before normalising, so the two paths never share mutable state.
-- **Why `mpsc` and not `broadcast` for audio:** `broadcast` drops frames when any receiver lags, which is acceptable for UI events but not for audio data. `mpsc` with a bounded capacity provides back-pressure: if the Converter falls behind, the Recorder's `send()` returns an error immediately rather than silently dropping audio from the archive.
+- **Rationale:** The local archive must be a pristine, unprocessed bit-for-bit copy of the analog capture. By using separate channels with the Recorder as the sole ALSA reader, we guarantee the streamed copy never affects the archived audio. The Recorder encodes raw PCM to FLAC for the archive independently, then sends the same raw PCM to the Converter.
+- **Why `mpsc` and not `broadcast` for audio:** `broadcast` drops frames when any receiver lags, which is acceptable for UI events but not for audio data. `mpsc` with a bounded capacity provides back-pressure: if the Converter falls behind, the Recorder's `send()` returns an error immediately rather than silently dropping audio from the archive. For the Segment Channel, `try_send()` is used to drop segments if the Uploader lags, ensuring the Converter is never blocked.
 - **Constraint:** The two audio `mpsc` channels carry only audio data. The `broadcast` channel (`sse_tx`) carries only JSON event strings for the monitor UI. Never use `broadcast` for audio data.
 
 ## Why verbatim FLAC subframes?
@@ -64,9 +64,9 @@ The system builds its own segmented streaming protocol (a JSON manifest pointing
 
 ## Why does the Recorder→Converter channel carry PCM, not FLAC frames?
 
-- **Rationale:** An early design sent encoded FLAC frames over the raw channel, requiring the Converter to implement a FLAC decoder to recover PCM for normalisation. This added a full decode step in the audio hot path (potentially 1–2ms per period) and introduced a tight coupling between the encoder and converter implementations. Sending raw PCM is unambiguous, zero-copy-friendly (via `Arc<Vec<i32>>`), and requires no shared codec knowledge between the two tasks.
+- **Rationale:** An early design sent encoded FLAC frames over the raw channel, requiring the Converter to implement a FLAC decoder to recover PCM. This added a full decode step in the audio hot path (potentially 1–2ms per period) and introduced a tight coupling between the encoder and converter implementations. Sending raw PCM is unambiguous, zero-copy-friendly (via `Arc<Vec<i32>>`), and requires no shared codec knowledge between the two tasks.
 - **Archive encoding:** The Recorder Task independently encodes the same PCM buffer to FLAC for the archive write. This is a second encode of the same data, but it runs asynchronously and does not block the PCM send to the Converter. The two encodes are logically independent.
-- **Constraint:** The `tokio::sync::mpsc` channel between Recorder and Converter carries `Arc<Vec<i32>>` (shared ownership, zero-copy clone). The Converter must not mutate the shared buffer — it clones it before passing to the normaliser (`normalizer.process(&mut buffer.to_vec())`).
+- **Constraint:** The `tokio::sync::mpsc` channel between Recorder and Converter carries `Arc<Vec<i32>>` (shared ownership, zero-copy clone). The Converter must not mutate the shared buffer.
 
 ## Why Opus for the LQ stream?
 
@@ -129,7 +129,7 @@ The ThinkPad running the `radio-server` requires a rotation strategy for the pri
 The architecture relies heavily on separate, independent processes working in tandem.
 
 *   **Rationale:** Without centralized metrics, debugging a silent failure (e.g., the capture crate stalls, or R2 uploads begin failing) is incredibly difficult.
-*   **Implementation Strategy:** The server must expose a minimal set of telemetry metrics (e.g., capture buffer overruns, normalizer LUFS targets, upload success/failure rates, rolling window size). These can be simple Prometheus-style `/metrics` endpoints pulled locally, or piped directly to the local operator UI. The Deno client should also report back basic playback stall metrics to an analytics endpoint to measure real-world listener experience.
+*   **Implementation Strategy:** The server must expose a minimal set of telemetry metrics (e.g., capture buffer overruns, upload success/failure rates, rolling window size). These can be simple Prometheus-style `/metrics` endpoints pulled locally, or piped directly to the local operator UI. The Deno client should also report back basic playback stall metrics to an analytics endpoint to measure real-world listener experience.
 
 ## Graceful Degradation (Auto-Bitrate Switching)
 
