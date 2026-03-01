@@ -6,7 +6,7 @@ The `crates/server` library is the main binary that orchestrates the entire `rad
 
 All state is held in an `Arc<AppState>` and shared safely across tasks:
 
-*   `streaming: AtomicBool`: Toggled by the `/start` and `/stop` HTTP endpoints. When `false`, the Recorder Task must pause writing to the local archive and pause sending PCM data to the Converter Task, effectively silencing the broadcast and conserving disk/CPU resources without tearing down the ALSA handle.
+*   `streaming: AtomicBool`: Toggled by the `/start` and `/stop` HTTP endpoints. When `false`, the Recorder Task must pause writing to the local archive and pause sending PCM data to the Converter Task, effectively stopping the live stream output and conserving disk/CPU resources without tearing down the ALSA handle.
 *   `vu_left, vu_right: AtomicI32`: Peak sample values continuously updated by the pipeline for the UI VU meters.
 *   `recording_path: Mutex<String>`: The full path to the current local archive file (e.g., `./recordings/recording-1234.flac`).
 *   `recording_bytes: AtomicU64`: The total number of bytes written to the current archive file.
@@ -122,7 +122,7 @@ When the shutdown signal fires, the cancellation token is cancelled. Each task m
 3. Move the staging file to `./recordings/` via `tokio::fs::rename`.
 4. Log the final archive file path and size.
 
-**Converter Task shutdown:** Drop the in-progress partial segment (log its incomplete frame count). Do not broadcast a partial segment to the Uploader.
+**Converter Task shutdown:** Drop the in-progress partial segment (log its incomplete frame count). Do not forward a partial segment to the Uploader via the mpsc channel.
 
 **Cloud Uploader Task shutdown:**
 1. Complete any in-flight `PUT` request (do not cancel mid-upload — would create a partial S3 object).

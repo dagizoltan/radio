@@ -25,7 +25,7 @@ The UI utilizes a dark theme palette (`#0f0f0f` background) and a monospace font
 ### Dual VU Meters
 
 Displays real-time audio levels for the Left and Right channels.
-*   Data driven by the `vu` SSE event (values are `0-32768`).
+*   Data driven by the `vu` SSE event. Values are raw 24-bit peak magnitudes in the range `0–8,388,607`. The monitor UI must scale these to its display range (e.g., divide by 8,388,607 to get a `0.0–1.0` normalized level, or divide by 32,768 to approximate a 16-bit display scale).
 *   Visual bars animate using CSS transforms or canvas rendering.
 *   Color-coded zones: Green (normal), Yellow (approaching 0 dBFS), Red (clipping).
 *   Includes a numeric dBFS readout.
