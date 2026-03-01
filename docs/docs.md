@@ -20,7 +20,7 @@ This system captures analog audio from a vinyl turntable (via a Behringer UMC404
 |  |  [ Capture ] -> [ Raw Encoder ] -> [ Local Archive ]|  |
 |  |       |                                             |  |
 |  |       v                                             |  |
-|  |  [ Converter ] -> [ Encoder ] -> [ R2 Uploader ]    |  |
+|  |  [ Converter (HQ & LQ Encode) ] -> [ R2 Uploader ]  |  |
 |  |                                                     |  |
 |  |  [ HTTP/SSE Monitor UI ]                            |  |
 |  +-----------------------------------------------------+  |

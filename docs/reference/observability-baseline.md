@@ -36,6 +36,10 @@ The `radio-server` HTTP task exposes metrics at `GET /metrics` in Prometheus tex
 # TYPE radio_capture_overruns_total counter
 radio_capture_overruns_total 0
 
+# HELP radio_segment_upload_exhaustion_total Total segments skipped due to upload retry exhaustion
+# TYPE radio_segment_upload_exhaustion_total counter
+radio_segment_upload_exhaustion_total 0
+
 # HELP radio_s3_put_latency_seconds Last S3 PUT latency
 # TYPE radio_s3_put_latency_seconds gauge
 radio_s3_put_latency_seconds{quality="hq"} 1.82

@@ -138,7 +138,7 @@ docker compose stop --timeout 30
 **What happens during shutdown:**
 1. Docker sends `SIGTERM` to the `radio` container.
 2. The Rust binary's shutdown handler catches the signal.
-3. The Recorder Task flushes and closes the current staging FLAC file, then moves it to `./recordings/`.
+3. The Recorder Task flushes and closes the current staging FLAC file, then copies it to `./recordings/` and deletes the staging copy. A direct `rename()` is not used because `/staging/` (tmpfs) and `./recordings/` (host-mounted volume) are different filesystems — the kernel returns `EXDEV` for cross-device renames. See [Graceful Shutdown](../radio-server/server.md) for the copy-then-delete implementation contract.
 4. The Converter Task completes the current in-progress segment (or discards a partial one, logging its index).
 5. The Cloud Uploader Task completes the in-flight S3 `PUT` (with up to 3 retries), then writes a final `manifest.json` with `"live": false`.
 6. The binary exits cleanly.

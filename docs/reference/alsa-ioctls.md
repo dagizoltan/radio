@@ -82,4 +82,6 @@ struct SndrPcmXferi {
     *   Await `readable()`.
     *   Construct `SndrPcmXferi` pointing to a `&mut [i32]` buffer sized for 4096 frames (8192 samples).
     *   Execute `IOCTL_READI_FRAMES`.
-    *   If `result > 0`, process audio. If `EWOULDBLOCK`, loop.
+    *   If `result > 0`: process audio (normal path).
+    *   If `EWOULDBLOCK`: loop back to `readable()` — kernel not yet ready.
+    *   If `EPIPE`: an xrun has occurred. Call `IOCTL_PREPARE` to reset the hardware state, increment `radio_capture_overruns_total`, log a `WARN`, then loop back to `readable()`. Do **not** treat `EPIPE` as `EWOULDBLOCK` — after an xrun the device is in an error state and will never signal readiness without a `PREPARE` reset. See [Capture Crate — XRUN Recovery](../radio-server/capture.md#xrun-recovery-epipe-handling) for the full sequence.
