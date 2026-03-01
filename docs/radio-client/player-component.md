@@ -138,6 +138,8 @@ The core of the player is the fetch loop, which continuously polls for new segme
     if (this.dataset.token) url += `?token=${this.dataset.token}`;
     ```
     HQ segments are FLAC (`.flac`). LQ segments are raw continuous Opus packets (`.opus`). Quality is differentiated by path prefix and file extension.
+    *   **Robust Fetching:** Wrap the `fetch()` call with an `AbortController` timeout (e.g., 15 seconds) to prevent the promise from hanging indefinitely if the network silently drops.
+    *   **404 Handling:** If the fetch returns a `404 Not Found` (which can happen if the client is lagging and the rolling window has deleted the segment, or if the server restarted and performed a startup sweep), abort the current segment fetch, sleep briefly, and immediately poll the manifest to resynchronize the `latest` index.
     *   Get a `ReadableStreamDefaultReader` from the response body.
     *   Loop `reader.read()`. As each `Uint8Array` chunk arrives:
         *   Pass the chunk to the WASM decoder: `const pcm = decoder.push(chunk)`.

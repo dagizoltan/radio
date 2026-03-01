@@ -56,12 +56,11 @@ opus_staging: Vec<i32>  // interleaved stereo, pre-allocated with capacity 960 *
 
 On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values):
 1. Append all samples from the received `Arc<Vec<i32>>` into `opus_staging`.
-2. While `opus_staging.len() >= 1920` (960 frames × 2 channels):
-   - Drain the first 1920 samples from `opus_staging`.
-   - Convert the drained `i32` samples to `f32` (divide by `8388608.0` for 24-bit).
-   - Pass the 1920-sample `f32` slice to `opus_encoder.encode_float()`.
+2. Process frames in chunks of 1920 samples (960 frames × 2 channels). **Performance Critical:** Do not use `Vec::drain(..1920)` in a `while` loop, as this causes an `O(N^2)` memory shift inside the hot-path. Instead, iterate over `opus_staging.chunks_exact(1920)`:
+   - Convert the 1920-sample chunk from `i32` to `f32` (divide by `8388608.0` for 24-bit).
+   - Pass the `f32` slice to `opus_encoder.encode_float()`.
    - Accumulate the resulting Opus packet into the current segment's Ogg writer.
-3. Leftover samples (at most 1919) remain in `opus_staging` for the next period.
+3. After the loop, extract the `chunks_exact.remainder()`. Overwrite the start of `opus_staging` with the remainder and truncate the vector to the remainder's length. This performs exactly one memory shift per ALSA period.
 
 **Frame size constraint:** The Opus encoder must be initialized with a frame size of `960` samples. Do not use other valid Opus frame sizes (480, 2880, etc.) — 960 (20ms at 48kHz) is the standard and produces the best quality/latency balance for this use case.
 

@@ -29,6 +29,8 @@ The device is opened with `O_RDWR | O_NONBLOCK`.
 
 *(Note: The `S24_LE` ALSA format uses 32-bit words (4 bytes per sample), where the audio data occupies the lower 24 bits and the top 8 bits are zero-padded. The hardware may natively expose `S32_LE` or `S24_3LE` (tightly packed 3 bytes). The implementer must log and check the supported formats and ensure the 24 bits are correctly extracted and packed tightly (3 bytes per sample) before verbatim FLAC encoding.)*
 
+**CRITICAL CONSTRAINT (Sign-Extension):** Because ALSA's `S24_LE` format stores 24-bit audio in the lower 3 bytes of a 32-bit word, the capture crate **must** sign-extend the 24th bit into the top 8 bits when converting to a standard Rust `i32`. Without sign-extension, negative audio samples will be interpreted as massive positive integers, resulting in extreme distortion when normalized to `f32` later in the pipeline.
+
 ### #[repr(C)] Structs
 
 The crate defines Rust structs with `#[repr(C)]` that exactly match the memory layout of the kernel's `<sound/asound.h>` structures:
