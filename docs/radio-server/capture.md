@@ -46,7 +46,7 @@ The capture loop uses Tokio's `AsyncFd` for zero-polling, kernel-driven wakeups.
 2.  The `read_period` method awaits `async_fd.readable()`. This puts the Tokio task to sleep.
 3.  When the kernel signals the ALSA file descriptor is readable (a period of 4096 frames is ready), Tokio wakes the task.
 4.  The task calls `try_io` with the `IOCTL_READI_FRAMES` ioctl to read the period into an `&mut [i32]` buffer.
-5.  If the read is successful, it returns the number of samples read. If it returns `EWOULDBLOCK`, the task loops back to await readability.
+5.  If the read is successful, it returns the number of samples read. If it returns `EWOULDBLOCK`, the task loops back to await readability. If it returns `EPIPE`, the recovery path described in XRUN Recovery below is executed.
 
 ## XRUN Recovery (EPIPE Handling)
 

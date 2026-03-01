@@ -37,7 +37,7 @@ Handles direct hardware capture and local uncompressed archiving.
     *   Writes the frames directly to the staging archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
     *   Sends the raw PCM period as `Arc<Vec<i32>>` via a bounded `tokio::sync::mpsc` channel (capacity 16) to the Converter Task. The FLAC encoding above is written to the archive only — the Converter receives raw PCM directly and never sees the FLAC-encoded bytes.
     *   Emits VU levels to `sse_tx`.
-6.  **Archiving:** Periodically (every 8 minutes or on graceful shutdown), it flushes the current staging file, closes the handle, and asynchronously moves it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue. The 8-minute interval keeps each staging file at ~200 MB, within the 256 MB tmpfs limit. See Docker Compose config for the mount size.
+6.  **Archiving:** Periodically (every 8 minutes or on graceful shutdown), it flushes the current staging file, closes the handle, and asynchronously copies then deletes it to the host-mounted `./recordings/` directory for long-term storage, opening a new staging file to continue. This copy-then-delete is required because a direct `rename()` across these filesystems causes an `EXDEV` error. The 8-minute interval keeps each staging file at ~200 MB, within the 256 MB tmpfs limit. See Docker Compose config for the mount size.
 
 ### Process 2: Converter Task
 
@@ -102,11 +102,12 @@ Receives completed segments and handles S3 uploads and manifest management.
 
     **Retry exhaustion:** If all retries are exhausted for a segment `PUT`:
     1. Log `ERROR: segment {index} upload failed after {n} retries — skipping`.
-    2. Discard the segment bytes from memory.
-    3. Do **not** update the manifest. The `latest` index does not advance for the failed segment.
-    4. Do **not** update the rolling window queue — the failed segment was never successfully stored on R2, so there is nothing to delete.
-    5. Continue processing the next segment received from the Converter channel.
-    6. Emit an `r2` SSE event with `{ "uploading": false, "segment": index, "last_ms": <last_successful_ms>, "error": true }` so the monitor UI can surface the failure.
+    2. Increment the `radio_segment_upload_exhaustion_total` Prometheus metric.
+    3. Discard the segment bytes from memory.
+    4. Do **not** update the manifest. The `latest` index does not advance for the failed segment.
+    5. Do **not** update the rolling window queue — the failed segment was never successfully stored on R2, so there is nothing to delete.
+    6. Continue processing the next segment received from the Converter channel.
+    7. Emit an `r2` SSE event with `{ "uploading": false, "segment": index, "last_ms": <last_successful_ms>, "error": true }` so the monitor UI can surface the failure.
 
     **Client behavior under skipped indices:** The client's jump-ahead logic already handles gaps. If `latest` jumps by 2 (a segment was skipped), the client detects `currentIndex < latest - 3` and snaps to `latest - 1`. No client-side changes are needed.
 
