@@ -52,7 +52,7 @@ The core JavaScript API is `push(bytes: &[u8]) -> Vec<f32>`.
     *   It extracts sample rate (20 bits), channels (3 bits + 1), and bits per sample (5 bits + 1) using specific bit offsets from the packed metadata block.
     *   If successful, `header_parsed = true`.
 3.  **Frame Decode Loop:** Once the header is parsed, it enters a loop attempting to decode as many full frames as possible from the buffer.
-4.  **Consumption:** Processed bytes are removed from the front of the internal buffer. Unprocessed bytes (a partial frame at the end of a chunk) remain in the buffer for the next `push()` call.
+4.  **Consumption:** Processed bytes are removed from the front of the internal buffer. Unprocessed bytes (a partial frame at the end of a chunk) remain in the buffer for the next `push()` call. **Performance Critical:** Do not use `Vec::drain(..)` or `Vec::remove(0)` to remove processed bytes in a loop, as this causes `O(N^2)` memory shifting inside the WASM linear memory and can cause playback stutters on lower-end devices. Instead, track a read offset integer during the decode loop, and only use `Vec::drain(..offset)` or `slice::copy_within` once per `push()` call to move the unprocessed remainder to the front.
 5.  **Return (Zero-Copy Optimization):** Instead of allocating a new `Vec<f32>` and copying it across the WASM/JS boundary, the decoder should maintain an internal output buffer in WASM linear memory. The `push()` method returns a pointer (and length) to this buffer. The JavaScript side constructs a `Float32Array` *view* directly over the WASM memory buffer, avoiding a massive garbage-collection-inducing copy operation on every chunk.
 
 ## Frame Decode Process

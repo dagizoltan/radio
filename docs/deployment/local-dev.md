@@ -49,7 +49,9 @@ Open a browser and navigate to the MinIO Console at `http://localhost:9001`.
     ```bash
     docker compose logs radio
     ```
-    Note: The browser fetches the manifest directly from `http://localhost:9000/radio-stream/live/manifest.json`, not from `http://localhost:3000`.
+    Note: The browser fetches the audio segments directly from `http://localhost:9000/radio-stream/live/...`.
+
+    *   **CORS Configuration:** Ensure the `minio-setup` container successfully applied the CORS policy to the `radio-stream` bucket. Without CORS allowing `GET` requests from `http://localhost:3000`, the browser will refuse to play the audio segments.
 
 ### 5. Open the Operator Monitor
 
