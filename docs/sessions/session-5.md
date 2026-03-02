@@ -32,7 +32,7 @@ You are building the interactive frontend logic in `islands/player.js` and the a
 - **Architecture:** Move the `setInterval` fetch loop into a standard Web Worker to survive backgrounding. Use `postMessage` to communicate with `player.js`.
 - **Dynamic Buffering Strategy:**
   - Track `bytes_downloaded` and `time_taken_ms` per segment.
-  - Calculate `bandwidth_bps`. If `bandwidth_bps < 30000` (e.g. 240kbps, approaching Opus VBR limits), dynamically increase the pre-roll from `latest - 2` to `latest - 4`.
+  - Calculate `bandwidth_bps`. If `bandwidth_bps` drops near the stream bitrate (e.g., `< 1,500,000 bps` for HQ FLAC or `< 800,000 bps` for LQ FLAC), dynamically increase the pre-roll from `latest - 2` to `latest - 4`.
 - **Jump-Ahead Logic:** If `currentIndex < latest - max_buffer_target - 1`, snap `currentIndex` to `latest - 1`. If `404`, fetch manifest again instantly.
 - **Zero-Copy Buffer Pool:** Receive WASM memory view. Pull from a recycled buffer array:
   ```javascript
@@ -41,7 +41,7 @@ You are building the interactive frontend logic in `islands/player.js` and the a
   workletPort.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer
   ```
 - **403 Refresh:** On 403, `await fetch('/api/token', { method: 'POST' })`, update the token, and retry the segment.
-- **Quality Switching:** Call `flacDecoder.reset()` for HQ. Send `"FLUSH"` to worklet, increment `currentIndex` and fetch next segment immediately.
+- **Quality Switching:** Call `decoder.reset()` for BOTH streams (since both are standard standalone FLAC files now). Send `"FLUSH"` to worklet, increment `currentIndex` and fetch the next segment immediately.
 
 **Validation:**
 Test the player extensively across browsers (Chrome, Firefox, iOS Safari). Verify that backgrounding the tab for 30 seconds, then foregrounding it, successfully triggers the `QUERY_DEPTH` -> `FLUSH` -> jump-to-live-edge sequence without playing 30 seconds of stale audio. Verify that toggling between HQ and LQ produces a clean audio break without pitch-shifting.

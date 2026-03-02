@@ -55,7 +55,7 @@ The R2 Uploader actively maintains a queue of uploaded segments and issues `DELE
 
 ## Why a Custom Chunk-Streaming Architecture (Why not HLS/Icecast)?
 
-The system builds its own segmented streaming protocol (a JSON manifest pointing to standalone 10-second FLAC/Opus files) rather than using industry standards like Icecast or HTTP Live Streaming (HLS).
+The system builds its own segmented streaming protocol (a JSON manifest pointing to standalone 10-second FLAC files) rather than using industry standards like Icecast or HTTP Live Streaming (HLS).
 
 *   **Rationale:**
     *   *Vs. Icecast:* Icecast requires a long-lived, dedicated TCP connection from every listener to a central server. This scales poorly and is vulnerable to transient network drops. Our architecture pushes static chunks to an edge CDN (Cloudflare R2), making delivery infinitely scalable, cacheable, and resilient to client network hiccups.
@@ -68,15 +68,14 @@ The system builds its own segmented streaming protocol (a JSON manifest pointing
 - **Archive encoding:** The Recorder Task independently encodes the same PCM buffer to FLAC for the archive write. This is a second encode of the same data, but it runs asynchronously and does not block the PCM send to the Converter. The two encodes are logically independent.
 - **Constraint:** The `tokio::sync::mpsc` channel between Recorder and Converter carries `Arc<Vec<i32>>` (shared ownership, zero-copy clone). The Converter must not mutate the shared buffer.
 
-## Why Opus for the LQ stream?
+## Why Downsampled FLAC for the LQ stream?
 
-The Converter process encodes the lower-quality (LQ) fallback stream as Opus at 128 kbps stereo using the `audiopus` crate (safe Rust FFI bindings to the libopus C library) for encoding. It uses a custom length-prefixed binary format to package the raw Opus packets instead of an Ogg container.
+The Converter process encodes the lower-quality (LQ) fallback stream as a downsampled verbatim FLAC stream (e.g., 24kHz, 16-bit stereo) using the exact same pure-Rust `FlacEncoder` logic as the HQ stream.
 
-- **Rationale:** Opus is perceptually transparent at 128 kbps — indistinguishable from lossless for the vast majority of listeners and material. It achieves better compression than 16-bit FLAC at equivalent bitrates and far better than MP3, making it the optimal choice for a mobile-first fallback stream. Crucially, both `audiopus` (safe bindings to libopus, well-maintained) and a pure-Rust WASM Opus decoder (`opus-rs`) are available, keeping the build clean. This introduces a C dependency (libopus) in the Converter Task. The radio Dockerfile must install libopus at both build time (libopus-dev) and runtime (libopus). Validate the binary links correctly with: ldd target/release/radio-server | grep opus. The trade-off versus a second FLAC stream is the addition of a second WASM decoder module in the browser bundle (~60–80 KB gzipped), which is acceptable given the perceptual quality advantage.
-- **No MP3:** There is no production-quality pure-Rust MP3 encoder available. Using `libmp3lame` via FFI would introduce a C dependency and cross-compilation complexity inconsistent with the project's architecture goals.
-- **No Ogg Framing (Gapless Opus):** To avoid the inherent 6.5ms `pre_skip` gap caused by restarting an Ogg Opus stream every 10 seconds (which accumulates ~2.3s of desync per hour), the Ogg container is not used. Instead, the Converter Task maintains a continuous Opus encoder state across segments and packages the raw Opus packets into a simple custom binary format (e.g., a 2-byte length prefix followed by the payload). The WASM decoder reads the length prefix and decodes the continuous packet stream directly, achieving perfectly gapless continuous Opus streaming and significantly simplifying both the encoder and decoder. *Trade-off:* Unlike the HQ FLAC segments which are standalone standard files, the LQ `.opus` segments are non-standard blobs directly tailored for the WASM pipeline. They cannot be played individually by standard media players (e.g., VLC, mpv).
-- **Bitrate mode:** The Opus encoder is configured for unconstrained VBR (`OPUS_SET_VBR(1)`, `OPUS_SET_VBR_CONSTRAINT(0)`). At a 128 kbps target, VBR segments vary in size: simple passages may produce ~100 KB, complex or loud passages ~200–220 KB, with an average around 160 KB over a typical broadcast hour. The bandwidth estimate and upload latency alarm thresholds account for this range. CBR would waste bandwidth on quiet passages and is not used.
-- **Constraint:** LQ segment file extension is `.opus`. Quality is differentiated by path prefix (`live/hq/` vs `live/lq/`). The HQ FLAC decoder and LQ Opus decoder are separate WASM modules, each following the identical `push(bytes) → f32[]` API so the player fetch loop switches decoders by swapping a single reference.
+- **Rationale (100% Pure Rust):** Originally, the architecture used Opus at 128kbps for the LQ stream. However, both the `audiopus` server crate and the `opus-rs` WASM decoder are C-bindings to `libopus`. This required compiling C code to WASM via Emscripten/wasi-sdk, managing `pkg-config` in Docker, and breaking the project's goal of a clean, pure-Rust, zero-C-dependency build. By using a downsampled FLAC stream, the entire server and client decoder remain 100% pure, safe Rust.
+- **Implementation:** The Converter task simply drops every other sample (decimating from 48kHz to 24kHz) and truncates the 24-bit words to 16-bit (with optional fast dithering). It then feeds this to a second `FlacEncoder` configured for 24kHz/16-bit.
+- **Trade-off:** A 24kHz/16-bit verbatim FLAC segment is significantly larger than a 128kbps Opus segment (~1.5 Mbps vs 128 kbps), so it is a "lower quality" fallback primarily in terms of computational decode overhead and DAC fidelity rather than achieving extreme bandwidth compression. However, for a system prioritizing architectural purity, maintaining a single codec implementation across the entire stack is the superior trade-off.
+- **Constraint:** Both HQ and LQ segment file extensions are `.flac`. Quality is differentiated solely by the URL path prefix (`live/hq/` vs `live/lq/`). The web player utilizes a single FLAC WASM decoder module that dynamically adjusts to the sample rate/bps parsed from the incoming FLAC stream headers.
 
 ## Why explicitly flush the AudioWorklet on quality switch?
 
@@ -100,8 +99,8 @@ If a mobile listener loses their internet connection (e.g., entering a tunnel) f
 
 The S3 Uploader explicitly sets `Cache-Control` headers when pushing to Cloudflare R2 to ensure the CDN scales infinitely without hitting the origin bucket.
 
-*   **Rationale:** If a thousand listeners request the same 10-second chunk simultaneously, the edge CDN must serve it to prevent high egress costs and bucket throttling. LQ Opus segments average ~160 KB at 128 kbps VBR but range from ~100 KB to ~220 KB depending on programme content. Upload bandwidth estimates should use the upper bound (~220 KB) for worst-case planning.
-*   **Constraint:** FLAC/Opus segments must be uploaded with `Cache-Control: public, max-age=31536000, immutable` (they never change once uploaded).
+*   **Rationale:** If a thousand listeners request the same 10-second chunk simultaneously, the edge CDN must serve it to prevent high egress costs and bucket throttling. Upload bandwidth estimates should use the upper bound for worst-case planning.
+*   **Constraint:** FLAC segments must be uploaded with `Cache-Control: public, max-age=31536000, immutable` (they never change once uploaded).
 
 ## Manifest Edge Caching (Avoiding Class B Costs)
 
@@ -144,7 +143,7 @@ The architecture relies heavily on separate, independent processes working in ta
 
 The client must automatically handle degraded network conditions without manual user intervention.
 
-*   **Rationale:** While the HQ FLAC stream is the priority, a mobile listener entering an area with poor signal will experience constant buffering. Expecting the user to manually click an "LQ Opus" button is a poor user experience.
+*   **Rationale:** While the HQ FLAC stream is the priority, a mobile listener entering an area with poor signal will experience constant buffering. Expecting the user to manually click an "LQ FLAC" button is a poor user experience.
 *   **Implementation Strategy:** The Web Component's custom fetch loop must measure the download time of each 10-second chunk. If the fetch time consistently exceeds a safe threshold (e.g., it takes 8 seconds to download 10 seconds of audio), the client should automatically pivot to fetching from the LQ manifest. If network conditions improve and stabilize for several minutes, it can attempt an opportunistic pivot back to the HQ stream.
 ## Why 8-digit segment indices with wrap-at-100M?
 

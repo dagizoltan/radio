@@ -12,19 +12,16 @@ You are shifting from the Rust backend to the Deno frontend and the browser WASM
 - **Token Refresh (`/api/token`):** Implement a `POST` endpoint that generates and returns a fresh short-lived token (`{ "token": "xyz" }`) for clients recovering from a `403 Forbidden` response. Check `Origin` to require same-site.
 - **Static Assets (`/static/*`):** Use `serveStatic` from `@hono/node-server/serve-static` (or Deno equivalent) to serve the JS/CSS and `.wasm` files.
 
-**2. WASM Decoders (`decoder/flac` & `decoder/opus`):**
-- **Shared Architecture:** Both decoders must implement a `push(bytes: &[u8]) -> *const f32` API. Expose a `len() -> usize` method to get the length of the written buffer.
-- **Opus Decoder (`decoder/opus`):**
-  - Use `opus-rs` to decode raw packets to `f32` PCM.
-  - Implement the gapless API: `accumulator.extend_from_slice(bytes)`. Read a `u16` Big Endian length prefix. Extract the payload, decode, append `f32` results to the WASM linear memory output buffer.
-  - Safety check: `if accumulator.len() < prefix_length + 2`, wait for the next chunk before consuming.
+**2. WASM Decoder (`decoder/flac`):**
+- **Single Decoder Architecture:** Since both HQ and LQ streams are now FLAC, build only one WASM module. It must implement a `push(bytes: &[u8]) -> *const f32` API. Expose a `len() -> usize` method to get the length of the written buffer.
 - **FLAC Decoder (`decoder/flac`):**
-  - Implement the minimal verbatim subset (block size `0b0111`, rate `0b1100`, 24-bit, sign-extended to `f32`).
-  - Implement tentative parse with rollback: `let start = reader.position();`. Parse header. `if remaining_bytes < required { reader.set_position(start); return; }`
+  - Implement the minimal verbatim subset. It must read the `STREAMINFO` block to dynamically learn the stream's sample rate and bps (e.g., 48kHz/24-bit or 24kHz/16-bit).
+  - Implement tentative parse with rollback: `let start = reader.position();`. Parse frame header. `if remaining_bytes < required { reader.set_position(start); return; }`
+  - Implement sign extension based on bps: `let sample: i32 = (raw_value as i32) << (32 - bps) >> (32 - bps);`. Normalize to `f32` (`sample as f32 / (1 << (bps - 1)) as f32`).
   - Provide a `reset()` method: clears the accumulator and resets the `header_parsed` boolean so the next push correctly expects the 38-byte stream header.
 - **Zero-Copy Memory View:** In Javascript, after calling `wasm.push()`, do:
   `const pcmView = new Float32Array(wasm.memory.buffer, wasm.get_ptr(), wasm.get_len());`
   Do NOT call `postMessage(pcmView, [pcmView.buffer])`.
 
 **Validation:**
-Ensure the Deno server starts and correctly proxies the manifest with caching headers. Write a generic JS unit test that pushes raw FLAC and Opus segment bytes (downloaded from the MinIO server) through the compiled WASM modules and verifies that correct, float-normalized `[-1.0, 1.0]` PCM arrays are returned.
+Ensure the Deno server starts and correctly proxies the manifest with caching headers. Write a generic JS unit test that pushes raw 48kHz/24-bit and 24kHz/16-bit FLAC segment bytes (downloaded from the MinIO server) through the compiled WASM module and verifies that correct, float-normalized `[-1.0, 1.0]` PCM arrays are returned for both qualities.

@@ -31,4 +31,4 @@
 - **Jump-ahead:** If `currentIndex < latest - 3`, snap to `latest - 1`.
 - **Rollover detection:** If `latest < currentIndex && currentIndex - latest > 3`, treat as rollover; snap to `latest`.
 - **Stale stream detection:** If `Date.now() - updated_at > segment_s * STALE_MANIFEST_MULTIPLIER * 1000`, show "Stream may be offline" warning even if `live: true`. (Using shared constant `STALE_MANIFEST_MULTIPLIER = 3`).
-- **Quality URL construction:** `${r2Url}/live/${quality}/segment-${String(latest).padStart(8,'0')}.${quality==='hq'?'flac':'opus'}`
+- **Quality URL construction:** `${r2Url}/live/${quality}/segment-${String(latest).padStart(8,'0')}.flac`

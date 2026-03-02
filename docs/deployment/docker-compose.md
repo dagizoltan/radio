@@ -58,8 +58,8 @@ The automated script applies the following CORS JSON rule using `mc anonymous se
 
 *   **Build**: Built from `radio-server/Dockerfile`.
     *   Two-stage build: `rust:1.77-slim` for compilation, `debian:bookworm-slim` for runtime.
-    *   Installs `pkg-config`, `libasound2-dev` (build time), and `libasound2` (runtime).
-    *   **CI Constraint:** After building, validate the binary does not dynamically link `libasound`: `ldd target/release/radio-server | grep asound` must return no output. If `alsa-sys` appears in `Cargo.lock`, fail the build.
+    *   Since the codebase uses no C bindings, no `libasound2-dev` or `pkg-config` is required. It is a standard Rust compilation.
+    *   **CI Constraint:** After building, validate the binary does not dynamically link `libasound` or any C libraries: `ldd target/release/radio-server` should show only standard system libraries (e.g. `libc`, `libm`).
 *   **Dependencies**: `depends_on: minio-setup` with the `condition: service_completed_successfully` flag.
 *   **Ports**: Exposes port `8080` (Monitor UI).
 *   **Device Passthrough**: Maps `/dev/snd` from the host to `/dev/snd` in the container.
@@ -76,12 +76,11 @@ The automated script applies the following CORS JSON rule using `mc anonymous se
 
 *   **Build**: Built from `radio-client/Dockerfile`.
     *   Uses `denoland/deno:2.0.0` or a multi-stage Rust+Deno image.
-    *   *Build-time Requirement:* The Dockerfile must install: (1) the Rust toolchain with wasm32-unknown-unknown target, (2) wasm-pack, (3) Emscripten (emcc) or a wasi-sdk build of libopus for the WASM target, since audiopus/opus-rs links against the libopus C library and requires it to be compiled to WASM. The FLAC decoder crate (pure Rust) requires only wasm-pack. Build order:
+    *   *Build-time Requirement:* The Dockerfile must install the Rust toolchain with the `wasm32-unknown-unknown` target and `wasm-pack`. Since the architecture is 100% pure Rust, no Emscripten, `wasi-sdk`, or C-toolchains are needed. Build order:
         ```bash
         RUN wasm-pack build --target web decoder/flac/
-        RUN wasm-pack build --target web decoder/opus/   # requires libopus WASM
         ```
-        Validate both .wasm outputs exist in static/ before the Deno server starts.
+        Validate the `.wasm` output exists in `static/` before the Deno server starts.
     *   Pre-caches dependencies with `deno cache main.js`.
 *   **Dependencies**: `depends_on: minio-setup` with the `condition: service_completed_successfully` flag.
 *   **Ports**: Exposes port `3000` (Listener Interface).

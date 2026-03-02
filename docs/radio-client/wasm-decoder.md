@@ -9,28 +9,9 @@ The `decoder/flac/` directory contains the minimal FLAC Rust crate compiled to W
 Specifically, it only handles:
 *   Verbatim subframes.
 *   Block size code `0b0111` (16-bit literal).
-*   Sample rate code `0b1100` (24-bit literal).
-*   24-bit stereo.
+*   Sample rate codes.
+*   24-bit stereo (HQ) and 16-bit stereo (LQ).
 *   No LPC, no Rice coding, no other subframe types.
-
-## OpusDecoder (LQ Stream)
-
-The `decoder/opus/` crate exposes an `OpusDecoder` class for the LQ gapless continuous Opus stream. It uses the `opus-rs` crate (safe Rust bindings to the reference libopus implementation) and compiles to WASM via `wasm-pack --target web`.
-
-### push() Method API
-
-The API is identical to `FlacDecoder.push()`: `push(bytes: &[u8]) -> Vec<f32>`.
-
-1.  **Binary Format Accumulation:** The LQ stream abandons the Ogg container to achieve gapless continuous streaming. Instead, the raw incoming bytes are accumulated in an internal `Vec<u8>` buffer.
-2.  **Length Prefix Parsing:** The decoder reads a 2-byte Big Endian integer `u16` from the front of the accumulator, representing the length of the following raw Opus packet payload. **Crucial Safety Check:** Before attempting to read this 2-byte prefix, the decoder must ensure `accumulator.len() >= 2`. A network chunk boundary might split the 2-byte prefix, leaving only 1 byte in the accumulator on a `push()`. Attempting to read a `u16` from a 1-byte slice will panic the WASM module and crash the web worker.
-3.  **Decode Loop:** It extracts the payload of the specified length and passes it to `OpusDecoder::decode_float()`, producing interleaved `f32` PCM at 48000 Hz. If the accumulator does not hold enough bytes for the complete payload length, it aborts the loop and waits for the next chunk via `push()`.
-4.  **No Pre-skip:** Because the stream is continuous and does not use Ogg page boundaries, the Opus decoder maintains its state seamlessly across 10-second HTTP segment boundaries. There is no `pre_skip` to discard, completely eliminating the 6.5ms gap present in the older Ogg implementation.
-5.  **Return:** Decoded `f32` samples are returned in the same format as `FlacDecoder`: interleaved stereo, range `[-1.0, 1.0]`, ready for the AudioWorklet ring buffer.
-
-### Segment Boundary Handling
-
-The player simply fetches the next `.opus` segment and continues calling `decoder.push()` with the raw bytes. The WASM decoder does not need to be reset between segments because the binary stream layout is strictly continuous (a 2-byte length prefix spanning perfectly across HTTP chunk boundaries).
-
 
 ## FlacDecoder Struct
 
@@ -40,7 +21,9 @@ The `FlacDecoder` struct maintains state across chunk pushes:
 *   Parsed stream parameters (sample rate, channels, bps).
 *   A `header_parsed` boolean flag.
 
-**Per-segment lifecycle:** Similar to Opus, do not create a new `FlacDecoder` instance per segment to avoid main-thread allocation jank. Expose a `decoder.reset()` method that empties the accumulator buffer and sets `header_parsed` to `false`. Since each segment begins with a full FLAC stream header (`fLaC` + `STREAMINFO`), calling `reset()` ensures the next chunk correctly parses the header rather than misinterpreting it as frame data.
+The exact same WASM decoder class is used for both the HQ stream and the downsampled LQ stream. The decoder dynamically adjusts its parsing logic based on the parameters it reads from the incoming `STREAMINFO` block and the frame headers.
+
+**Per-segment lifecycle:** Do not create a new `FlacDecoder` instance per segment to avoid main-thread allocation jank. Expose a `decoder.reset()` method that empties the accumulator buffer and sets `header_parsed` to `false`. Since each segment begins with a full FLAC stream header (`fLaC` + `STREAMINFO`), calling `reset()` ensures the next chunk correctly parses the header rather than misinterpreting it as frame data.
 
 ## push() Method API
 
@@ -73,10 +56,11 @@ For each frame in the loop:
     *   CRC-8 (must match).
 3.  **Subframe Decode:** Decode two verbatim subframes (Left, then Right).
     *   Read subframe header byte.
-    *   Read `block_size` number of samples at `bps` bits each (e.g., 24 bits).
-    *   Sign-extend the 24-bit two's complement value to an i32:
-        `let sample: i32 = (raw_24bit as i32) << 8 >> 8;`
-        where raw_24bit is the u32 formed by reading 24 bits from the BitReader. This arithmetic right shift propagates the sign bit correctly. Failure to sign-extend causes negative samples to appear as large positive values, producing severe distortion in the normalized f32 output.
+    *   Read `block_size` number of samples at `bps` bits each (e.g., 24 bits or 16 bits depending on the stream).
+    *   Sign-extend the two's complement value to an i32:
+        For 24-bit: `let sample: i32 = (raw_value as i32) << 8 >> 8;`
+        For 16-bit: `let sample: i32 = (raw_value as i32) << 16 >> 16;`
+        This arithmetic right shift propagates the sign bit correctly. Failure to sign-extend causes negative samples to appear as large positive values, producing severe distortion in the normalized f32 output.
 4.  **Byte Alignment:** Align the reader to a byte boundary after subframes.
 5.  **CRC-16:** Read the trailing CRC-16.
 6.  **Sufficiency Check:** The frame size is only fully known after parsing the variable-length frame header (the UTF-8 frame number makes header length variable). The correct approach is a tentative parse with rollback:

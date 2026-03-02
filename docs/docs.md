@@ -47,8 +47,7 @@ This system captures analog audio from a vinyl turntable (via a Behringer UMC404
 [ Browser Listener ] <-- Fetches Segments directly from R2
    |
    +-- <radio-player> Web Component
-   +-- WASM FLAC Decoder (HQ)
-   +-- WASM Opus Decoder (LQ)
+   +-- WASM FLAC Decoder (HQ & LQ)
    +-- AudioWorklet
 ```
 
@@ -87,8 +86,7 @@ radio-stream/
     │   ├── player.js
     │   └── worklet.js
     ├── decoder/
-    │   ├── flac/           (Rust WASM FLAC decoder crate)
-    │   └── opus/           (Rust WASM Opus decoder crate)
+    │   └── flac/           (Rust WASM FLAC decoder crate)
     ├── static/
     └── Dockerfile
 ```
@@ -146,7 +144,7 @@ The system design enforces several strict rules outlined below. Violating these 
 9.  **ALSA device discovery is dynamic**: The [Capture Crate](radio-server/capture.md) finds the UMC404HD card number at runtime by parsing `/proc/asound/cards`.
 10. **Tokio AsyncFd for capture, not threads**: The capture loop must use `AsyncFd` for kernel-driven wakeups instead of a blocking polling loop, as detailed in the [Capture Crate](radio-server/capture.md) doc.
 11. **No Proxying**: The public `radio-client` serves only the HTML shell and static assets. The browser Web Component must fetch audio segments *directly* from the S3/R2 bucket. The Deno server must **never proxy audio segments** or the `/events` SSE stream to the public internet to conserve bandwidth and connection limits.
-12. **LQ stream is raw continuous Opus**: The LQ stream uses Opus at 128 kbps VBR serialized as a custom length-prefixed binary format (2-byte big-endian length prefix + raw Opus packet payload). No Ogg container. Gapless across segment boundaries. File extension `.opus`. Decoded by a dedicated WASM OpusDecoder module.
+12. **LQ stream is downsampled FLAC**: To maintain a 100% pure-Rust system with zero C-dependencies, the LQ stream avoids Opus/Ogg. Instead, it is a downsampled verbatim FLAC stream (e.g., 24kHz/16-bit). File extension is `.flac`. It is decoded by the exact same WASM FLAC module as the HQ stream.
 13. **No media proxy**: The Deno server never proxies media traffic. All audio segments must be fetched directly from R2/MinIO using the `data-r2-url` SSR-injected attribute. However, the browser fetches `manifest.json` from the Deno SSR endpoint to utilize edge caching and save on R2 Class B GET costs.
 14. **8-digit segment indices**: All segment keys use 8-digit zero-padded indices (`segment-{:08}`). Index wraps at 100,000,000. Client handles rollover via sign-flip detection in jump-ahead logic.
 15. **Single active tab**: The Web Locks API enforces one active decoder pipeline per user. A second tab shows a "Stream is already playing in another tab" message.

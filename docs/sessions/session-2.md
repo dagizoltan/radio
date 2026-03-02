@@ -1,6 +1,6 @@
 # Prompt for Session 2: Tokio Multi-Task Pipeline (The Engine)
 
-**Goal:** Implement the main Tokio orchestration, data flow, threading, and continuous Opus streaming.
+**Goal:** Implement the main Tokio orchestration, data flow, threading, and downsampled multi-quality streaming.
 
 **Context & Requirements:**
 You will build the `server` crate's core pipeline, orchestrating the `capture` and `encoder` crates built in Session 1, and introducing the `Converter Task`.
@@ -33,19 +33,21 @@ You will build the `server` crate's core pipeline, orchestrating the `capture` a
 - Ensure the archive file rotates exactly every hour by tracking elapsed frames. Close and fsync the old file, open a new timestamped file, and write a fresh `stream_header()` to it.
 
 **3. Task 2 (Converter Task):**
-- **Dual Encoders:** Initialize a persistent `FlacEncoder` for HQ and an `audiopus::Encoder` for LQ (48000 Hz, Stereo, Application::Audio, 128000 bps unconstrained VBR). Ensure the `FlacEncoder::stream_header()` is immediately acquired and written to `AppState.flac_header`.
-- **Opus Staging Buffer:** Implement `opus_staging: Vec<i32>`. For each incoming `Arc<Vec<i32>>` (8192 elements):
-  1. `opus_staging.extend_from_slice(&received_arc);`
-  2. Loop over `opus_staging.chunks_exact(1920)` (960 stereo frames).
-  3. Convert the chunk to `f32` (`sample as f32 / 8388608.0`), encode via `audiopus`, and append to the LQ `Vec<u8>`.
-  4. Extract the remainder, overwrite the front of `opus_staging`, and truncate to the remainder length (one memory shift per period).
-- **Segment Assembly:** Accumulate exactly 491,520 frames (10.24 seconds = 120 ALSA periods = 512 Opus frames). Track a `frame_counter`. Pre-allocate the HQ `Vec<u8>` to ~2,955,000 bytes.
-- **Opus Gapless Formatting:** Serialize the raw Opus packets continuously by prepending each packet with a 2-byte Big Endian payload length prefix. Do NOT use an Ogg container. Do NOT reset the Opus encoder state between segments.
+- **Dual Encoders:** Initialize two persistent `FlacEncoder` instances.
+  - `hq_encoder`: 48000 Hz, 2 channels, 24-bit, block size 4096.
+  - `lq_encoder`: 24000 Hz, 2 channels, 16-bit, block size 2048.
+  Ensure the HQ `FlacEncoder::stream_header()` is immediately acquired and written to `AppState.flac_header`.
+- **LQ Downsampling Buffer:** Implement `lq_staging: Vec<i32>`. For each incoming `Arc<Vec<i32>>` (8192 elements representing 4096 frames):
+  1. Iterate with step 4: `(0..received_arc.len()).step_by(4)` to skip every other frame.
+  2. Take the Left and Right channel `i32` 24-bit samples: `let l = received_arc[i]; let r = received_arc[i+1];`
+  3. Right-shift by 8 bits to convert 24-bit to 16-bit: `lq_staging.push(l >> 8); lq_staging.push(r >> 8);`
+  4. Feed the `lq_staging` slice into `lq_encoder.encode_frame()`.
+- **Segment Assembly:** Accumulate exactly 491,520 HQ frames (10.24 seconds = 120 ALSA periods). Track a `frame_counter`. Pre-allocate the HQ `Vec<u8>` to ~2,955,000 bytes and the LQ `Vec<u8>` to ~985,000 bytes.
 - **Dispatch:** Upon reaching the 491,520-frame boundary:
-  1. Package the completed HQ `Vec<u8>` (without stream header) and LQ `Vec<u8>`.
+  1. Package the completed HQ `Vec<u8>` (without stream header) and LQ `Vec<u8>` (without stream header).
   2. Use `try_send((index, Bytes::from(hq), Bytes::from(lq)))`.
   3. If full, drop the segment and log a warning.
   4. Reset accumulators and increment the internal index.
 
 **Validation:**
-Ensure the server correctly splits the signal, writes a continuous bit-perfect archive file to disk, and yields cleanly separated 10.24s FLAC and Opus `Vec<u8>` buffers into the uploader channel without stalling or memory leaking.
+Ensure the server correctly splits the signal, writes a continuous bit-perfect archive file to disk, and yields cleanly separated 10.24s HQ FLAC and LQ FLAC `Vec<u8>` buffers into the uploader channel without stalling or memory leaking.

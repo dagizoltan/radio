@@ -48,38 +48,22 @@ Handles direct hardware capture and local uncompressed archiving.
 Consumes the raw stream and encodes it into multiple qualities (HQ and LQ).
 
 1.  Receives from the bounded `mpsc` channel. The `broadcast` channel carries only JSON event strings for the monitor UI SSE feed. Shutdown is coordinated via a cancellation token, not via the broadcast channel.
-2.  Initializes the audio encoders: one `FlacEncoder` for the HQ stream (24-bit), and one Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`). The Converter Task creates and owns its own FlacEncoder instance, separate from the Recorder Task's archive encoder. These two encoder instances are never shared. The Converter's encoder is created once at Converter startup and lives for the process lifetime, giving the Converter a monotonically increasing frame counter across all segments.
-    After creating the HQ FlacEncoder instance, immediately call encoder.stream_header() and write the result into AppState.flac_header (acquiring the Mutex). This must happen before the Converter begins processing any segments. The HTTP Task's /local/:id handler depends on this value being set; it must handle None by returning 503 Service Unavailable with body 'Stream not yet initialized'.
-    Before encoding for Opus, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets. Rather than an Ogg container, these raw packets are appended directly into the segment's byte buffer, prefixed by their 2-byte payload length in network byte order (Big Endian), allowing the decoder to slice a continuous stream of Opus packets perfectly gaplessly across 10-second segments.
+2.  Initializes the audio encoders: two separate `FlacEncoder` instances. One for the HQ stream (48000Hz, 24-bit), and one for the LQ stream (e.g., 24000Hz, 16-bit). The Converter Task creates and owns both of these instances, separate from the Recorder Task's archive encoder. The Converter's encoders live for the process lifetime, giving the Converter monotonically increasing frame counters across all segments.
+    After creating the HQ FlacEncoder instance, immediately call `encoder.stream_header()` and write the result into `AppState.flac_header` (acquiring the Mutex). This must happen before the Converter begins processing any segments. The HTTP Task's `/local/:id` handler depends on this value being set; it must handle `None` by returning 503 Service Unavailable.
 
-**Opus PCM Staging Buffer**
+**Downsampling and Dithering Buffer**
 
-Before any samples are passed to the Opus encoder, they must be staged through an internal PCM buffer local to the Converter Task:
-
-```
-opus_staging: Vec<i32>  // interleaved stereo, pre-allocated with capacity 960 * 2
-```
+For the LQ path, the raw 48000Hz/24-bit PCM must be downsampled to the target format before FLAC encoding.
 
 On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values):
-1. Append all samples from the received `Arc<Vec<i32>>` into `opus_staging`.
-2. Process frames in chunks of 1920 samples (960 frames × 2 channels). **Performance Critical:** Do not use `Vec::drain(..1920)` in a `while` loop, as this causes an `O(N^2)` memory shift inside the hot-path. Instead, iterate over `opus_staging.chunks_exact(1920)`:
-   - Convert the 1920-sample chunk from `i32` to `f32` (divide by `8388608.0` for 24-bit).
-   - Pass the `f32` slice to `opus_encoder.encode_float()`.
-   - Accumulate the resulting Opus packet into the current segment's Ogg writer.
-3. After the loop, extract the `chunks_exact.remainder()`. Overwrite the start of `opus_staging` with the remainder and truncate the vector to the remainder's length. This performs exactly one memory shift per ALSA period.
+1. **HQ FLAC path:** `encode_frame()` receives a `&[i32]` borrow of the `Arc` contents directly. Zero copy, zero allocation.
+2. **LQ FLAC path:** A simple decimation loop reads every other frame (skipping 1 out of 2 samples per channel to achieve 24000Hz). The 24-bit values are right-shifted (arithmetic shift) by 8 bits to convert them to 16-bit integers. An optional fast triangular dither can be applied here to prevent quantization distortion. The downsampled frames are collected into a reusable, pre-allocated `Vec<i32>` staging buffer and passed to the LQ `FlacEncoder`.
 
-**Frame size constraint:** The Opus encoder must be initialized with a frame size of `960` samples. Do not use other valid Opus frame sizes (480, 2880, etc.) — 960 (20ms at 48kHz) is the standard and produces the best quality/latency balance for this use case.
-
-**Segment boundary:** When the 491,520-frame threshold is reached (exactly 10.24 seconds) and a segment is finalized, the `opus_staging` buffer will naturally be empty because 491,520 is perfectly divisible by the Opus frame size of 960 (exactly 512 Opus frames) and the ALSA period size of 4096 (exactly 120 ALSA periods). This perfect alignment eliminates the need to carry over any remaining PCM samples across segments or flush partial frames, avoiding `OPUS_BAD_ARG` errors from the `libopus` encoder. The continuous encoder state must **not** be reset.
-
-3.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames. For each received period:
-    *   **HQ FLAC path:** `encode_frame()` receives a `&[i32]` borrow of the `Arc` contents directly. Zero copy, zero allocation.
-    *   **LQ Opus path:** Samples are copied element-wise into `opus_staging` for frame-size alignment (see Opus PCM Staging Buffer above). This is a necessary copy; the shared `Arc` contents are never mutated.
-    *   Neither path mutates the shared buffer. The `Arc` is dropped when both paths have consumed the period.
-4.  **Segment Assembly:** Accumulates the encoded frames for both qualities.
-    *   *Optimization Strategy:* To prevent constant vector reallocations as frames accumulate, the accumulator `Vec<u8>` for the 10.24-second segment must be pre-allocated with `Vec::with_capacity()`. A 10.24-second 24-bit verbatim FLAC segment contains the raw PCM payload (`48000 * 3 bytes * 2 channels * 10.24s = 2,949,120` bytes) plus the FLAC framing overhead. A 10.24s segment has exactly 120 FLAC frames (since ALSA period is 4096), each contributing a frame header (~10-15 bytes) and a CRC-16 (2 bytes), adding around ~2,040 bytes. To ensure zero reallocations, the buffer must be padded slightly larger than just the PCM size.
-    *   **Threshold:** 491,520 frames (10.24 × 48000 Hz). Track a `frame_counter: u64` incremented by `period_frames` (4096) per ALSA period. Pre-allocate accumulator: `Vec::with_capacity(2_955_000)` for HQ (PCM + framing overhead padding).
-    *   Assembles completed files in memory. For the cloud Uploader, the stream header is NOT prepended yet — the Cloud Uploader Task prepends the stream header when uploading to S3 (to produce a standalone FLAC file). The HqBytes sent over the mpsc channel do not contain the stream header.
+3.  Loops, receiving raw PCM periods from the Recorder Task via the bounded `mpsc` channel. Each message is an `Arc<Vec<i32>>` containing one period of 4096 interleaved frames. The `Arc` is dropped when both paths have consumed the period. Neither path mutates the shared buffer.
+4.  **Segment Assembly:** Accumulates the encoded verbatim frames for both qualities.
+    *   *Optimization Strategy:* To prevent constant vector reallocations, pre-allocate accumulators with `Vec::with_capacity()`. A 10.24s 24-bit verbatim FLAC segment contains `~2,955,000` bytes. The 24kHz/16-bit LQ segment contains `~985,000` bytes.
+    *   **Threshold:** 491,520 frames (10.24 × 48000 Hz). Track a `frame_counter: u64` incremented by `period_frames` (4096) per ALSA period.
+    *   Assembles completed files in memory. For the cloud Uploader, the stream header is NOT prepended yet — the Cloud Uploader Task prepends the stream headers when uploading to S3 (to produce standalone FLAC files). The bytes sent over the mpsc channel do not contain the stream header.
     *   Sends completed HQ and LQ segment files to the Cloud Uploader via a bounded `tokio::sync::mpsc` channel with capacity **3**. Uses `try_send()` (non-blocking). If the channel is full, logs `WARN: segment {index} dropped — uploader lagging` and discards the segment. Never blocks waiting for the Uploader.
 
 ### Task 3: Cloud Uploader Task
@@ -105,13 +89,13 @@ Receives completed segments and handles S3 uploads and manifest management.
     *   Uploads the segments to S3 using raw HTTP with [AWS Signature V4](aws-sig-v4.md).
     *   All S3 PUTs must include explicit Content-Type headers:
         - HQ FLAC segments (.flac):    Content-Type: audio/flac
-        - LQ Opus segments (.opus):    Content-Type: application/octet-stream
+        - LQ FLAC segments (.flac):    Content-Type: audio/flac
         - manifest.json:               Content-Type: application/json
         Omitting Content-Type causes some CDN edge nodes to serve segments as application/octet-stream, breaking any fallback native decode paths.
     *   Upload ordering and atomicity: Upload HQ first, then LQ. The manifest is NOT updated until BOTH the HQ PUT and LQ PUT for segment N have succeeded. If the HQ PUT succeeds but the LQ PUT exhausts all retries, both the HQ upload (already on R2) and the LQ failure are treated as a full segment skip: do not advance the manifest, do not update the rolling window for either quality, log the partial upload at ERROR level and emit an r2 SSE error event. The already-uploaded HQ file will be cleaned up by the startup sweep on next restart or by the S3 lifecycle rule. This ensures clients can always safely fetch both quality paths for any index present in the manifest.
     *   **Resilience:** Uses an exponential backoff retry loop (e.g., 3-5 retries) for the HTTP PUT requests to handle transient network drops. To prevent unbounded channel stalls from backing up the pipeline, the `reqwest` client must be configured with aggressive timeouts (e.g., a `connect_timeout` of 2s and a total `timeout` of 8s). If the HTTP request hits the timeout, it counts as a failure towards the retry limit. Once exhausted, the segment is aggressively dropped, unblocking the channel so the Recorder task is not impacted.
-    *   Key format uses quality folders: e.g., `live/hq/segment-{:08}.flac` and `live/lq/segment-{:08}.opus`.
-    *   **Immutable Audio Caching:** The `PUT` request for the actual audio segment files (`.flac` and `.opus`) **must** include the `Cache-Control: public, max-age=31536000, immutable` header. Because segments are monotonically numbered and never modified after creation, aggressive caching prevents unnecessary Class B GETs from the origin if multiple users hit the same edge node.
+    *   Key format uses quality folders: e.g., `live/hq/segment-{:08}.flac` and `live/lq/segment-{:08}.flac`.
+    *   **Immutable Audio Caching:** The `PUT` request for the actual audio segment files (`.flac`) **must** include the `Cache-Control: public, max-age=31536000, immutable` header. Because segments are monotonically numbered and never modified after creation, aggressive caching prevents unnecessary Class B GETs from the origin if multiple users hit the same edge node.
     *   Writes `live/manifest.json` containing metadata for both streams: `{"live": true, "latest": index, "segment_s": 10.24, "updated_at": timestamp, "qualities": ["hq", "lq"]}`.
     *   **Crucial Manifest Caching Instruction:** The `PUT` request for `manifest.json` **must** include the `Cache-Control: no-store, max-age=0` metadata explicitly. Although `no-cache` would allow ETag-based revalidation, clients implement ETag tracking manually in JavaScript memory and fetch directly from R2. `no-store` is used to ensure no intermediate CDN layer retains any copy of the manifest.
 

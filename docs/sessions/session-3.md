@@ -11,12 +11,12 @@ You will implement Task 3 (Cloud Uploader) and the Axum HTTP Task within the `se
 - **S3 HTTP Uploads:** Use `reqwest::Client` with `connect_timeout(Duration::from_secs(2))` and `timeout(Duration::from_secs(8))`. Apply the provided `aws_sig_v4` module to sign the requests using `R2_ACCESS_KEY` and `R2_SECRET_KEY`.
 - **Atomic Multi-Upload State Machine:**
   1. **Upload HQ (`.flac`):** Retry up to 3 times with exponential backoff (e.g., 500ms, 1s, 2s).
-     - Success: Prepend the stream header (`flac_header` from AppState) to the `hq_bytes`, and PUT to S3 with `Content-Type: audio/flac`, `Cache-Control: public, max-age=31536000, immutable`.
+     - Success: Prepend the HQ stream header (`flac_header` from AppState) to the `hq_bytes`, and PUT to S3 at `live/hq/segment-{index}.flac` with `Content-Type: audio/flac`, `Cache-Control: public, max-age=31536000, immutable`.
      - Failure (exhausted): Drop the segment, do NOT update manifest, emit `r2` error SSE, continue to next segment.
-  2. **Upload LQ (`.opus`):** Retry up to 3 times.
-     - Success: PUT `lq_bytes` to S3 with `Content-Type: application/octet-stream`, `Cache-Control: public, max-age=31536000, immutable`.
+  2. **Upload LQ (`.flac`):** Retry up to 3 times.
+     - Success: Prepend the LQ stream header (generated once during startup) to `lq_bytes`. PUT to S3 at `live/lq/segment-{index}.flac` with `Content-Type: audio/flac`, `Cache-Control: public, max-age=31536000, immutable`.
      - Failure (exhausted): If HQ succeeded but LQ fails, *abandon the entire index*. Drop the segment, do NOT update the manifest, do NOT push to the rolling window. Emit an `r2` error SSE. (HQ will be cleaned up by lifecycle rules).
-  3. **Update Manifest:** If BOTH succeed, PUT `manifest.json` with `{"live": true, "latest": index, "segment_s": 10.24, ...}`. Use `Content-Type: application/json`, `Cache-Control: no-store, max-age=0`.
+  3. **Update Manifest:** If BOTH succeed, PUT `manifest.json` with `{"live": true, "latest": index, "segment_s": 10.24, "qualities": ["hq", "lq"]}`. Use `Content-Type: application/json`, `Cache-Control: no-store, max-age=0`.
 - **Rolling Window:** Push the successful keys (`index`) to a `VecDeque`. If `window.len() > 10`, `pop_front()` the oldest index and issue S3 `DELETE` requests for both its HQ and LQ keys. Update `state.json` with the new `latest` index.
 - **Local Playback Queue:** Push `(index, hq_bytes)` into `AppState.local_segments` (keep last 3). Ensure the stream header is NOT stored here to save RAM; the HTTP task will prepend it.
 
