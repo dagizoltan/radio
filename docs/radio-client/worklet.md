@@ -13,6 +13,7 @@ The class maintains internal state using a pre-allocated **Ring Buffer** to achi
 *   `writePointer`: An integer tracking where the next incoming chunk should be written.
 *   `readPointer`: An integer tracking where the next playback frame should be read.
 *   `samplesAvailable`: An integer tracking how much unread data exists in the ring buffer.
+*   `isBuffering`: A boolean flag initialized to `true`. Ensures playback only begins or resumes when a safe threshold of audio is available, preventing micro-stutters.
 
 It exposes a `"volume"` parameter via the `parameterDescriptors` static getter, with a default value of `0.8` (range `0.0` to `1.0`).
 
@@ -32,9 +33,10 @@ The worklet implements `this.port.onmessage = (event) => { ... }` to receive the
 The `process(inputs, outputs, parameters)` method is called by the Web Audio API every time it needs more audio data.
 
 1.  **Output Block:** The Web Audio API always requests blocks of exactly 128 frames per channel.
-2.  **Underrun Protection:** The worklet checks if it has enough data. Since the stream is interleaved stereo, 128 frames = 256 samples.
-    *   If `samplesAvailable < 256`, it signifies a buffer underrun. The method outputs silence (zeroes) and returns `true` to keep the processor alive.
-3.  **Demux and Volume:** If enough data exists, it pulls exactly 256 samples from the `ringBuffer` starting at `readPointer`, wrapping around if necessary.
+2.  **State Management (Pre-Roll Buffering):** To ensure a fluid stream and avoid severe stuttering (rapid 2.6ms start-stop clicking) during brief network drops:
+    *   If `isBuffering == true`, output silence (zeroes). Check if `samplesAvailable >= 192000` (e.g., 2 seconds of 48kHz stereo). If yes, set `isBuffering = false` and post a `{ type: "BUFFERING_COMPLETE" }` message back to the main thread to hide the UI spinner.
+    *   If `isBuffering == false` and `samplesAvailable < 256`, a buffer underrun has occurred. Set `isBuffering = true` immediately, output silence, and post a `{ type: "BUFFERING_START" }` message to the main thread to show a UI spinner. Wait for the 2-second threshold to be crossed again before resuming playback.
+3.  **Demux and Volume:** If `isBuffering == false`, pull exactly 256 samples from the `ringBuffer` starting at `readPointer`, wrapping around if necessary.
     *   It iterates 128 times.
     *   Even indices map to the left output channel: `outputs[0][0][i]`.
     *   Odd indices map to the right output channel: `outputs[0][1][i]`.
