@@ -82,10 +82,10 @@ radio-stream/
 │   └── Dockerfile
 └── radio-client/
     ├── deno.json
-    ├── main.tsx            (Hono entry point)
+    ├── main.js            (Hono entry point)
     ├── islands/
-    │   ├── player.ts
-    │   └── worklet.ts
+    │   ├── player.js
+    │   └── worklet.js
     ├── decoder/
     │   ├── flac/           (Rust WASM FLAC decoder crate)
     │   └── opus/           (Rust WASM Opus decoder crate)
@@ -110,7 +110,7 @@ radio-stream/
 
 ### Radio Client (Deno)
 *   [Overview](radio-client/overview.md): Islands architecture connecting SSR to the Web Component and WASM decoder.
-*   [Hono SSR](radio-client/hono-ssr.md): `main.tsx` routing, HTML shell rendering, and manifest fetching.
+*   [Hono SSR](radio-client/hono-ssr.md): `main.js` routing, HTML shell rendering, and manifest fetching.
 *   [Player Component](radio-client/player-component.md): The `<radio-player>` Web Component and chunk-fetching loop.
 *   [AudioWorklet](radio-client/worklet.md): The browser audio thread processor handling PCM queues and playback.
 *   [WASM Decoder](radio-client/wasm-decoder.md): The Rust-to-WASM crate that parses verbatim FLAC chunks into `f32` PCM.

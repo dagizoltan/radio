@@ -7,10 +7,10 @@ The `radio-client` is a Deno application using the Hono framework. It serves as 
 ```text
 radio-client/
 ├── deno.json
-├── main.tsx          <- Hono JSX SSR entry point
+├── main.js          <- Hono JSX SSR entry point
 ├── islands/
-│   ├── player.ts     <- Web Component for the browser
-│   └── worklet.ts    <- AudioWorklet processor for the browser
+│   ├── player.js     <- Web Component for the browser
+│   └── worklet.js    <- AudioWorklet processor for the browser
 ├── decoder/
 │   ├── flac/
 │   │   ├── Cargo.toml   <- Rust WASM FLAC decoder crate
@@ -31,14 +31,14 @@ radio-client/
 
 The client application follows an "Islands" architecture:
 
-1.  **Hono SSR (`main.tsx`)**: The server receives an incoming HTTP request. It fetches the stream manifest from R2 and uses Hono's JSX engine to render a complete HTML shell on the server. This ensures that even users with JavaScript disabled see a fully formed page with the current live status.
-2.  **Web Component (`islands/player.ts`)**: The rendered HTML includes a `<radio-player>` custom element. The server sends the `player.js` script asynchronously. Once loaded, the script hydrates the `<radio-player>` element, attaching the interactive playback logic and UI controls client-side without blocking the initial render.
+1.  **Hono SSR (`main.js`)**: The server receives an incoming HTTP request. It fetches the stream manifest from R2 and uses Hono's JSX engine to render a complete HTML shell on the server. This ensures that even users with JavaScript disabled see a fully formed page with the current live status.
+2.  **Web Component (`islands/player.js`)**: The rendered HTML includes a `<radio-player>` custom element. The server sends the `player.js` script asynchronously. Once loaded, the script hydrates the `<radio-player>` element, attaching the interactive playback logic and UI controls client-side without blocking the initial render.
 3.  **WASM Decoder (`decoder/`)**: The client-side player fetches FLAC segments over HTTP. Since the Web Audio API cannot natively decode continuous streams of chunked audio data, the player passes the raw bytes to a custom Rust-compiled WASM decoder. The decoder yields raw `f32` PCM data.
-4.  **AudioWorklet (`islands/worklet.ts`)**: The `f32` PCM data is posted via a `MessagePort` to an `AudioWorkletNode`. The worklet runs on a dedicated audio thread, buffering the samples and feeding them directly to the browser's audio destination, ensuring glitch-free playback decoupled from the main UI thread.
+4.  **AudioWorklet (`islands/worklet.js`)**: The `f32` PCM data is posted via a `MessagePort` to an `AudioWorkletNode`. The worklet runs on a dedicated audio thread, buffering the samples and feeding them directly to the browser's audio destination, ensuring glitch-free playback decoupled from the main UI thread.
 
 ## Component Connections
 
 *   **Server to R2**: **Server to R2 (SSR only):** The Hono server makes a single `manifest.json` fetch from R2 per page request, solely to render the live status badge and inject initial `data-*` attributes. All subsequent manifest polling and segment fetching is performed browser-side directly against R2.
 *   **Browser to CDN**: The browser fetches the initial HTML and static assets (`style.css`, JS, WASM) from Deno Deploy. The client-side `<radio-player>` Web Component then continuously polls the `manifest.json` and fetches the audio segments *directly* from the S3/R2 Cloudflare bucket to bypass the Deno proxy and save bandwidth.
-*   **Player to Decoder**: The `player.ts` script instantiates the WASM module and pushes incoming byte chunks into it, receiving `f32` arrays back.
-*   **Player to Worklet**: The `player.ts` script creates the `AudioWorkletNode` and uses `postMessage` to send the `f32` arrays to the `worklet.ts` processor running on the audio thread.
+*   **Player to Decoder**: The `player.js` script instantiates the WASM module and pushes incoming byte chunks into it, receiving `f32` arrays back.
+*   **Player to Worklet**: The `player.js` script creates the `AudioWorkletNode` and uses `postMessage` to send the `f32` arrays to the `worklet.js` processor running on the audio thread.

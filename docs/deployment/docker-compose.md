@@ -82,7 +82,7 @@ The automated script applies the following CORS JSON rule using `mc anonymous se
         RUN wasm-pack build --target web decoder/opus/   # requires libopus WASM
         ```
         Validate both .wasm outputs exist in static/ before the Deno server starts.
-    *   Pre-caches dependencies with `deno cache main.tsx`.
+    *   Pre-caches dependencies with `deno cache main.js`.
 *   **Dependencies**: `depends_on: minio-setup` with the `condition: service_completed_successfully` flag.
 *   **Ports**: Exposes port `3000` (Listener Interface).
 *   **Environment Variables**:

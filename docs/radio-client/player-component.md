@@ -1,6 +1,6 @@
-# Player Web Component (islands/player.ts)
+# Player Web Component (islands/player.js)
 
-The `islands/player.ts` file defines the interactive client-side logic for the `<radio-player>` Web Component.
+The `islands/player.js` file defines the interactive client-side logic for the `<radio-player>` Web Component.
 
 ## Initialization
 

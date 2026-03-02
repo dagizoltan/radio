@@ -1,6 +1,6 @@
-# Hono SSR (main.tsx)
+# Hono SSR (main.js)
 
-The `main.tsx` file is the entry point for the Deno application. It uses the Hono framework and its JSX engine to provide Server-Side Rendering (SSR) and injects initial state for the client.
+The `main.js` file is the entry point for the Deno application. It uses the Hono framework and its JSX engine to provide Server-Side Rendering (SSR) and injects initial state for the client.
 
 ## Server-Side Rendering
 

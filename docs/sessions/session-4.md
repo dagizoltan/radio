@@ -3,9 +3,9 @@
 **Goal:** Set up the `radio-client` Deno server, the `/api/manifest` caching proxy, the HMAC token injection, and build the Rust-to-WASM decoders.
 
 **Context & Requirements:**
-You are shifting from the Rust backend to the Deno frontend and the browser WASM decoders.
+You are shifting from the Rust backend to the Deno frontend and the browser WASM decoders. Note: The entire client-side and Deno codebase must be written in pure standard JavaScript (`.js`), NOT TypeScript or JSX. Use `hono/html` tagged template literals instead of JSX if needed.
 
-**1. Hono SSR Server (`main.tsx`):**
+**1. Hono SSR Server (`main.js`):**
 - **SSR Route (`/`):** Render the HTML shell containing the `<radio-player>` custom element.
 - **HMAC Token Injection:** If `TOKEN_SECRET` is set in the environment, generate a short-lived cryptographic HMAC token (incorporating a simple session ID or client IP if available) and inject it into the `<radio-player>` via the `data-token` attribute.
 - **Manifest Proxy (`/api/manifest`):** Fetch `manifest.json` from the `R2_PUBLIC_URL`. Set `Cache-Control: s-maxage=5` on the response to leverage CDN edge caching and dramatically reduce R2 Class B GET costs. Pass through the `ETag` from R2.

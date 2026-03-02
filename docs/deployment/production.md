@@ -70,7 +70,7 @@ This bypasses the local `minio` and `client` services. The server will now encod
 ## Step 4: Deploy the Client to Deno Deploy
 
 1.  Link your GitHub repository to Deno Deploy or use the `deployctl` CLI.
-2.  Set the entrypoint file to `radio-client/main.tsx`.
+2.  Set the entrypoint file to `radio-client/main.js`.
 3.  Configure the environment variables in the Deno Deploy dashboard:
     *   `R2_PUBLIC_URL`: The public URL configured in Step 1 (e.g., `https://pub-xxxxxx.r2.dev/my-radio-stream`).
 

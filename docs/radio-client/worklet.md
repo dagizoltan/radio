@@ -1,6 +1,6 @@
-# AudioWorklet (islands/worklet.ts)
+# AudioWorklet (islands/worklet.js)
 
-The `islands/worklet.ts` file defines the `AudioWorkletProcessor` that runs on the browser's dedicated audio rendering thread.
+The `islands/worklet.js` file defines the `AudioWorkletProcessor` that runs on the browser's dedicated audio rendering thread.
 
 ## Processor Registration
 

@@ -3,9 +3,9 @@
 **Goal:** Implement the client-side `<radio-player>` Web Component, the Web Worker fetch loop, and the AudioWorklet for flawless browser audio playback.
 
 **Context & Requirements:**
-You are building the interactive frontend logic in `islands/player.ts` and the audio rendering thread in `islands/worklet.ts`.
+You are building the interactive frontend logic in `islands/player.js` and the audio rendering thread in `islands/worklet.js`. Ensure you are writing standard ES modules (pure JavaScript, NO TypeScript).
 
-**1. AudioWorklet (`worklet.ts`):**
+**1. AudioWorklet (`worklet.js`):**
 - **Ring Buffer:** Implement a pre-allocated `Float32Array` ring buffer sized for ~20 seconds of audio (1,920,000 floats).
 - **Zero-Allocation Demux:** In `process()`, iterate exactly 128 times (one per output frame):
   `outputs[0][0][i] = ringBuffer[(readPointer + i * 2) % length] * volume;`
@@ -13,7 +13,7 @@ You are building the interactive frontend logic in `islands/player.ts` and the a
 - **Clock Drift Protection:** In the `port.onmessage` handler, check `chunk.length > freeSpace`. If the ring buffer is full (overflow), drop the incoming chunk entirely to resync clocks. Handle underruns natively by outputting silence.
 - **State Commands:** Implement `"FLUSH"` to zero out `samplesAvailable` and `"QUERY_DEPTH"` to report the current buffer depth back to the main thread.
 
-**2. Player Component (`player.ts`):**
+**2. Player Component (`player.js`):**
 - **Multi-Tab Prevention:** Use the Web Locks API (`navigator.locks.request("radio-player-singleton", ...)`). If the active tab closes, the background tab lock callback fires asynchronously; handle this by showing a "Playback transferred — click Play" UI rather than auto-starting (which breaks autoplay policy).
 - **AudioContext Lifecycle:** Create the `AudioContext` and call `resume()` synchronously within the initial play button click handler. Wrap `audioCtx.audioWorklet.addModule` in a `try/catch` and gracefully handle module load failures.
 - **iOS Interrupted State:** In the `onstatechange` handler, check `if (audioCtx.state === "suspended" || audioCtx.state === "interrupted")` and call `resume()` when the tab becomes visible.
