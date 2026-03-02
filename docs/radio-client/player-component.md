@@ -156,7 +156,9 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   The `currentQuality` state updates.
     *   The fetch loop immediately attempts to fetch the *next* `currentIndex` (`currentIndex + 1`) using the new quality path (`hq` FLAC or `lq` Opus).
     **Audio forward skip on quality switch:** Because the fetch loop fetches the *next* `currentIndex` from byte 0 in the new codec, the listener may experience a slight forward skip (up to 10 seconds of audio) after a quality switch (the portion of the current segment skipped). This produces a clean decode boundary with no codec state bleed and provides a better user experience than re-playing up to 10 seconds of already-heard audio.
-6.  **Iteration:** When `reader.read()` returns `done: true` normally, increment the `currentIndex`.
+6.  **Iteration:** When `reader.read()` returns `done: true` normally, increment the `currentIndex`. **CRITICAL Codec Boundary:**
+    *   If `currentQuality === 'hq'`, you **must** call `decoder.reset()` before fetching the next segment. Every HQ segment is a standalone FLAC file starting with a `fLaC` stream header; `reset()` tells the WASM decoder to expect and parse this header instead of treating it as garbage frame data.
+    *   If `currentQuality === 'lq'`, you **must not** call `decoder.reset()`. The Opus stream is raw and continuous across segments; resetting the decoder would break the stream state.
 7.  **Latency Display:** Calculate and update the UI with the estimated latency: `(latest - currentIndex) * segment_s` seconds behind live.
 ## AudioContext Lifecycle and Background Tab Handling
 
