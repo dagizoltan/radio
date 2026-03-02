@@ -6,25 +6,42 @@
 You are building the interactive frontend logic in `islands/player.js` and the audio rendering thread in `islands/worklet.js`. Ensure you are writing standard ES modules (pure JavaScript, NO TypeScript).
 
 **1. AudioWorklet (`worklet.js`):**
-- **Ring Buffer:** Implement a pre-allocated `Float32Array` ring buffer sized for ~20 seconds of audio (1,920,000 floats).
-- **Zero-Allocation Demux:** In `process()`, iterate exactly 128 times (one per output frame):
-  `outputs[0][0][i] = ringBuffer[(readPointer + i * 2) % length] * volume;`
-  `outputs[0][1][i] = ringBuffer[(readPointer + i * 2 + 1) % length] * volume;`
-- **Clock Drift Protection:** In the `port.onmessage` handler, check `chunk.length > freeSpace`. If the ring buffer is full (overflow), drop the incoming chunk entirely to resync clocks. Handle underruns natively by outputting silence.
-- **State Commands:** Implement `"FLUSH"` to zero out `samplesAvailable` and `"QUERY_DEPTH"` to report the current buffer depth back to the main thread.
+- **Ring Buffer:** Implement a pre-allocated `Float32Array` ring buffer sized for ~20 seconds of audio (1,920,000 floats). Track `readPointer`, `writePointer`, and `samplesAvailable`.
+- **Zero-Allocation Demux:** In `process(inputs, outputs, parameters)`, output silence if `samplesAvailable < 256` (underrun). Otherwise, iterate `i` from 0 to 127:
+  ```javascript
+  outputs[0][0][i] = ringBuffer[(readPointer + i * 2) % 1920000] * volume;
+  outputs[0][1][i] = ringBuffer[(readPointer + i * 2 + 1) % 1920000] * volume;
+  ```
+  Then advance `readPointer = (readPointer + 256) % 1920000` and decrement `samplesAvailable`.
+- **Clock Drift Protection:** In `port.onmessage`, calculate `freeSpace = 1920000 - samplesAvailable`. If `chunk.length > freeSpace` (overflow), drop the chunk and post an `"OVERFLOW"` warning to the main thread.
+- **State Commands:** Handle `"FLUSH"` (zero `samplesAvailable`, align pointers) and `"QUERY_DEPTH"` (post `samplesAvailable` back).
 
 **2. Player Component (`player.js`):**
-- **Multi-Tab Prevention:** Use the Web Locks API (`navigator.locks.request("radio-player-singleton", ...)`). If the active tab closes, the background tab lock callback fires asynchronously; handle this by showing a "Playback transferred — click Play" UI rather than auto-starting (which breaks autoplay policy).
-- **AudioContext Lifecycle:** Create the `AudioContext` and call `resume()` synchronously within the initial play button click handler. Wrap `audioCtx.audioWorklet.addModule` in a `try/catch` and gracefully handle module load failures.
-- **iOS Interrupted State:** In the `onstatechange` handler, check `if (audioCtx.state === "suspended" || audioCtx.state === "interrupted")` and call `resume()` when the tab becomes visible.
+- **Multi-Tab Prevention:**
+  ```javascript
+  navigator.locks.request("radio-player-singleton", async (lock) => {
+    // Hide "in use" warning, enable play button.
+    await new Promise(r => this._releaseLock = r); // Hold indefinitely
+  });
+  ```
+  If a background tab gets the lock later, do NOT auto-play. Update UI to "Playback transferred — Click Play".
+- **AudioContext Lifecycle:** Create the `AudioContext` and call `resume()` *synchronously* in the play button click handler before any `await`. Then wrap `await audioCtx.audioWorklet.addModule('/static/worklet.js')` in a `try/catch`.
+- **iOS Interrupted State:** In `audioCtx.onstatechange`, check `if (audioCtx.state === "suspended" || audioCtx.state === "interrupted")` and if document is visible, `audioCtx.resume()`.
 
-**3. Web Worker Fetch Loop:**
-- Move the core polling and chunk-fetching logic to a dedicated Web Worker to prevent background throttling.
-- **Buffering Strategy:** Start playing at `Math.max(0, latest - 2)`. Dynamically track the segment download bandwidth (bytes per second). If the bandwidth drops close to the streaming rate (especially for VBR Opus), expand the buffer target (e.g., fetch 3-4 segments ahead).
-- **Jump-Ahead Logic:** If `currentIndex < latest - 3`, snap to `latest - 1`. If `currentIndex` falls drastically behind, or a 404 occurs, instantly resync with the manifest.
-- **Zero-Copy Buffer Pool:** When transferring decoded PCM from the WASM view to the Worklet, do NOT transfer the view's `.buffer` directly (it detaches WASM memory). Use a pre-allocated buffer pool: `pcmCopy.set(pcm); worklet.postMessage(pcmCopy, [pcmCopy.buffer]);`.
-- **403 Refresh:** If a segment fetch returns `403 Forbidden`, hit `/api/token` to get a fresh HMAC token and retry.
-- **Quality Switching:** Call `decoder.reset()` for HQ FLAC boundaries, but NOT for LQ Opus boundaries (gapless). Send `"FLUSH"` to the worklet and fetch the `next` index on quality change.
+**3. Web Worker Fetch Loop (`fetch_worker.js`):**
+- **Architecture:** Move the `setInterval` fetch loop into a standard Web Worker to survive backgrounding. Use `postMessage` to communicate with `player.js`.
+- **Dynamic Buffering Strategy:**
+  - Track `bytes_downloaded` and `time_taken_ms` per segment.
+  - Calculate `bandwidth_bps`. If `bandwidth_bps < 30000` (e.g. 240kbps, approaching Opus VBR limits), dynamically increase the pre-roll from `latest - 2` to `latest - 4`.
+- **Jump-Ahead Logic:** If `currentIndex < latest - max_buffer_target - 1`, snap `currentIndex` to `latest - 1`. If `404`, fetch manifest again instantly.
+- **Zero-Copy Buffer Pool:** Receive WASM memory view. Pull from a recycled buffer array:
+  ```javascript
+  const pcmCopy = pool.pop() || new Float32Array(pcm.length);
+  pcmCopy.set(pcm);
+  workletPort.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer
+  ```
+- **403 Refresh:** On 403, `await fetch('/api/token', { method: 'POST' })`, update the token, and retry the segment.
+- **Quality Switching:** Call `flacDecoder.reset()` for HQ. Send `"FLUSH"` to worklet, increment `currentIndex` and fetch next segment immediately.
 
 **Validation:**
 Test the player extensively across browsers (Chrome, Firefox, iOS Safari). Verify that backgrounding the tab for 30 seconds, then foregrounding it, successfully triggers the `QUERY_DEPTH` -> `FLUSH` -> jump-to-live-edge sequence without playing 30 seconds of stale audio. Verify that toggling between HQ and LQ produces a clean audio break without pitch-shifting.
