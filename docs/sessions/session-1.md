@@ -1,149 +1,47 @@
 # Prompt for Session 1: Core Capture and Encoding (The Foundation)
 
-**Goal:** Implement the foundational pure-Rust crates for ALSA capture and FLAC encoding. Prove we can grab analog sound directly from the Linux kernel and losslessly serialize it into perfectly formatted verbatim FLAC files, completely bypassing C libraries like `libasound2`.
+**Goal:** Implement the foundational pure-Rust crates for ALSA capture and FLAC encoding. Prove we can grab analog sound and losslessly serialize it.
 
-## 1. Project Setup
-- Inside `radio-stream/radio-server`, initialize a standard Rust workspace.
-- Create `crates/capture/Cargo.toml` and `crates/encoder/Cargo.toml`.
-- Add `rustix` (with `fs`, `io`, `net` features) and `tokio` (with `fs`, `rt`, `macros`, `net`, `sync`) to the dependencies.
+**Context & Requirements:**
+You are to build the first layer of the Lossless Vinyl Radio Streaming System: the `capture` and `encoder` crates within the `radio-server` workspace.
 
-## 2. Capture Crate (`crates/capture`)
+**1. Capture Crate (`crates/capture`):**
+- **Device Discovery (`src/discovery.rs`):** Parse `/proc/asound/cards`. Read `CAPTURE_DEVICE_NAME`. If it matches a card name, extract the card number `{N}` and return the path `/dev/snd/pcmC{N}D0c`.
+- **ALSA Structs (`src/alsa_sys.rs`):** Define the exact `#[repr(C)]` memory layouts matching Linux `<sound/asound.h>` for `SndrPcmHwParams`, `SndInterval`, and `SndrPcmXferi`. Hardcode the specific hex ioctls (`SNDRV_PCM_IOCTL_HW_PARAMS`, etc).
+- **Configuration (`src/device.rs`):** Open the device `O_RDWR | O_NONBLOCK`. Call `ioctl` to request: `FORMAT_S24_LE` (value 6), `ACCESS_RW_INTERLEAVED` (value 3), `48000` Hz, `2` channels, `4096` frames per period, `4` periods buffer.
+- **Validation:** Crucially, read back the `hw_params` struct after the ioctl. Verify the device didn't fallback to a different rate or format. Panic if it did.
+- **Async Loop (`src/capture.rs`):** Wrap the `RawFd` in `tokio::io::unix::AsyncFd`. Await `.readable()`. Call `IOCTL_READI_FRAMES`.
+- **Sign-Extension:** Iterate over the raw `u32` words from the ALSA buffer. Extract the 24-bit audio using: `let sample: i32 = (raw_word as i32) << 8 >> 8;`. Collect these into a `Vec<i32>`.
+- **EPIPE (XRUN) Recovery:** If `IOCTL_READI_FRAMES` returns `EPIPE` (xrun):
+  1. Log a warning and increment the overrun counter.
+  2. Synthesize a zero-padded buffer of exactly `4096 * 2` (8192) `0i32` values to represent the lost period of silence.
+  3. Call `IOCTL_PREPARE` to reset the hardware.
+  4. Return the silence buffer to ensure the archive encoder maintains structural continuity.
 
-### 2.1 Device Discovery (`src/discovery.rs`)
-Do not hardcode `/dev/snd/pcmC1D0c`. Instead:
-1. Read `env::var("CAPTURE_DEVICE_NAME")`. Default to `"UMC404"`.
-2. Open `/proc/asound/cards` using `std::fs::read_to_string`.
-3. Parse the file line-by-line. The format looks like:
-   ` 1 [UMC404HD192k   ]: USB-Audio - UMC404HD 192k`
-4. Use string matching (`.contains()`) to find the line matching the environment variable.
-5. Extract the leading integer (the card number, e.g., `1`).
-6. Construct and return the string: `format!("/dev/snd/pcmC{}D0c", card_num)`. Return an error if not found.
+**2. Encoder Crate (`crates/encoder`):**
+- **BitWriter (`src/bitwriter.rs`):** Implement a struct that accepts a bit count and a value (`write_bits(val: u64, bits: u8)`), accumulating bits into a `Vec<u8>` without byte-aligning between calls.
+- **STREAMINFO (`src/flac.rs`):** The `stream_header()` method must produce:
+  - `fLaC` marker.
+  - `0x80` block header byte (indicating last metadata block) + 24-bit length `0x000022`.
+  - Bit-packed fields: `16`-bit min block, `16`-bit max block, `24`-bit min frame (0), `24`-bit max frame (0), `20`-bit sample rate (48000), `3`-bit channels (1 for stereo), `5`-bit bps (23 for 24-bit), `36`-bit total samples (0), and `128`-bit MD5 (0).
+- **Frame Writing:** `encode_frame(interleaved: &[i32], frame_number: u64)`:
+  - Write sync code `0x3FFE`.
+  - Write fixed codes for block size (`0b0111`), rate (`0b1100`), channels (`0b0001`), and bps (`0b110`).
+  - Write UTF-8 encoded `frame_number`.
+  - Write literal block size (`4095`) and rate (`48000`).
+  - Calculate and write CRC-8 of the header.
+  - Write subframe headers (`0b00000010` for verbatim) and the raw 24-bit samples byte-aligned.
+  - Calculate and write CRC-16 of the entire frame.
+- **CRCs (`src/crc.rs`):** Implement table-driven CRC-8 (`0x07`) and CRC-16 (`0x8005`).
 
-### 2.2 ALSA Kernel Structs (`src/alsa_sys.rs`)
-You must manually define the exact memory layout of the C structs expected by the Linux kernel ALSA subsystem. Do not use `bindgen`. Use `#[repr(C)]`.
-```rust
-#[repr(C)]
-pub struct SndInterval {
-    pub min: u32,
-    pub max: u32,
-    pub integer: u32,
-    pub empty: u32,
-}
+## 4. Testing Contract
+You must implement the following `cargo test` suites to prove the foundation is mathematically perfect before moving to Session 2:
+1. **BitWriter Bounds:** Test writing `0b101` (3 bits) followed by `0b11111` (5 bits) and verify the underlying byte array is exactly `[0xDF]`. Test writes that cross byte boundaries (e.g. writing a 24-bit value into an accumulator with 3 bits currently pending).
+2. **CRC Vectors:** Implement tests against known FLAC reference vectors. For example, verify the CRC-8 and CRC-16 of a known static byte array match the output of the reference `flac` binary.
+3. **Sign-Extension:** Feed `0x00_80_00_00` (which is negative in 24-bit two's complement) to the arithmetic shift logic and `assert_eq!(sample, -8388608)`.
 
-#[repr(C)]
-pub struct SndrPcmHwParams {
-    pub flags: u32,
-    pub masks: [u32; 8], // 8 * 32 = 256 bits for mask
-    pub mres: [u32; 5],
-    pub rmres: [u32; 5],
-    pub c: u32,
-    pub rmk: u32,
-    pub intervals: [SndInterval; 12],
-    pub ires: [u32; 9],
-    pub rmires: [u32; 9],
-    pub msbits: u32,
-    pub rate_num: u32,
-    pub rate_den: u32,
-    pub fifo_size: u32,
-    pub reserved: [u8; 64],
-}
-
-#[repr(C)]
-pub struct SndrPcmXferi {
-    pub result: i64,
-    pub buf: *mut std::ffi::c_void,
-    pub frames: u64,
-}
-```
-Define the IOCTL constants. In Linux, these are generated by macros, but you must hardcode the evaluated hex:
-- `SNDRV_PCM_IOCTL_HW_PARAMS`: `0xc2604111`
-- `SNDRV_PCM_IOCTL_PREPARE`: `0x4140`
-- `SNDRV_PCM_IOCTL_READI_FRAMES`: `0x80184151`
-- `SNDRV_PCM_IOCTL_DROP`: `0x4143`
-
-### 2.3 Device Configuration (`src/device.rs`)
-1. Use `rustix::fs::open` to open the discovered device path with `OFlags::RDWR | OFlags::NONBLOCK`.
-2. Construct a zeroed `SndrPcmHwParams` struct.
-3. Apply the masks:
-   - Access mode: `ACCESS_RW_INTERLEAVED` (value `3`). Set bit 3 in `masks[0]`.
-   - Format: `FORMAT_S24_LE` (value `6`). Set bit 6 in `masks[1]`.
-   - Subformat: `SUBFORMAT_STD` (value `0`). Set bit 0 in `masks[2]`.
-4. Set intervals:
-   - Sample rate: index 0. Set `min = 48000`, `max = 48000`, `integer = 1`.
-   - Channels: index 1. Set `min = 2`, `max = 2`, `integer = 1`.
-   - Period size: index 3. Set `min = 4096`, `max = 4096`, `integer = 1`.
-   - Buffer size: index 4. Set `min = 16384`, `max = 16384`, `integer = 1`.
-5. Call `rustix::io::ioctl` with `SNDRV_PCM_IOCTL_HW_PARAMS`.
-6. **Validation:** Assert that the ioctl succeeds. Read back the struct. If `intervals[0].min != 48000` or `intervals[1].min != 2`, panic. The kernel silently falls back if hardware doesn't support the requested params.
-7. Call `SNDRV_PCM_IOCTL_PREPARE` to ready the hardware.
-
-### 2.4 Async Capture Loop & Sign Extension (`src/capture.rs`)
-1. Wrap the raw file descriptor in `tokio::io::unix::AsyncFd::new(fd)`.
-2. Allocate a `buffer: Vec<u32>` of size `4096 * 2` (8192 words).
-3. Create an async loop: `let mut guard = async_fd.readable().await?;`.
-4. Inside, attempt the `IOCTL_READI_FRAMES` passing a pointer to the buffer and `frames = 4096`.
-5. **EWOULDBLOCK Handling:** If `errno` is `EAGAIN` or `EWOULDBLOCK`, call `guard.clear_ready()` and `continue`.
-6. **EPIPE Handling:** If `errno` is `EPIPE` (XRUN buffer overrun):
-   - Call `SNDRV_PCM_IOCTL_PREPARE`.
-   - Return a `Vec<i32>` of exactly 8192 zeroes (`vec![0; 8192]`) to pad the lost 85ms and maintain perfectly gapless continuous FLAC frames. Log a `WARN`.
-7. **Sign-Extension:** If the read succeeds, convert the `[u32]` buffer to `Vec<i32>`. Since `S24_LE` stores 24 bits in the lower 3 bytes of a 32-bit word, use exact arithmetic shifting to propagate the sign bit:
-   ```rust
-   let mut pcm = Vec::with_capacity(8192);
-   for &raw_word in buffer.iter() {
-       let sample: i32 = (raw_word as i32) << 8 >> 8;
-       pcm.push(sample);
-   }
-   ```
-
-## 3. Encoder Crate (`crates/encoder`)
-
-### 3.1 BitWriter (`src/bitwriter.rs`)
-FLAC requires writing sub-byte bit sequences without zero-padding between fields. Implement a struct:
-```rust
-pub struct BitWriter {
-    pub buffer: Vec<u8>,
-    accumulator: u64,
-    bits_in_acc: u8,
-}
-```
-Implement `write_bits(&mut self, value: u64, bit_count: u8)`. Shift `value` into `accumulator`, increment `bits_in_acc`. While `bits_in_acc >= 8`, extract the top 8 bits, push to `buffer`, and subtract 8 from `bits_in_acc`. Provide a `flush()` method to pad the final byte with zeroes if necessary.
-
-### 3.2 STREAMINFO Block (`src/flac.rs`)
-Implement `stream_header() -> Vec<u8>`.
-1. Write ASCII `fLaC`.
-2. Write the block header: `0x80` (flag 7 set = last metadata block, type 0 = STREAMINFO). Do NOT use `0x00`.
-3. Write the 24-bit block length: `0x000022` (34 bytes).
-4. Use `BitWriter` to pack:
-   - `write_bits(4096, 16)` // min block
-   - `write_bits(4096, 16)` // max block
-   - `write_bits(0, 24)` // min frame
-   - `write_bits(0, 24)` // max frame
-   - `write_bits(48000, 20)` // rate
-   - `write_bits(1, 3)` // channels - 1 (stereo = 1)
-   - `write_bits(23, 5)` // bps - 1 (24-bit = 23)
-   - `write_bits(0, 36)` // total samples (streaming)
-   - `write_bytes(&[0; 16])` // MD5
-
-### 3.3 Frame Encoding
-Implement `encode_frame(&mut self, interleaved: &[i32]) -> &[u8]`.
-1. Clear the internal buffer.
-2. Write Sync code `0x3FFE` (14 bits).
-3. Write Reserved `0` (1 bit), Strategy `0` (1 bit).
-4. Write Block size code `0b0111` (4 bits) indicating a 16-bit literal follows.
-5. Write Sample rate code `0b1100` (4 bits) indicating a 24-bit literal follows.
-6. Write Channel assignment `0b0001` (4 bits) for stereo.
-7. Write BPS code `0b110` (3 bits) for 24-bit.
-8. Write Reserved `0` (1 bit).
-9. Write UTF-8 encoded frame number (increment internal counter).
-10. Write literal block size `4095` (16 bits).
-11. Write literal sample rate `48000` (24 bits).
-12. Flush `BitWriter` to byte alignment. Calculate CRC-8 over the header bytes written so far. Write the 1-byte CRC.
-13. Write Left Subframe: Header `0x02` (verbatim, 0 waste bits). Iterate `interleaved.iter().step_by(2)` and write the lower 3 bytes of each `i32` directly to the buffer (Big Endian format).
-14. Write Right Subframe: Header `0x02`. Iterate `interleaved.iter().skip(1).step_by(2)` and write the lower 3 bytes.
-15. Calculate CRC-16 over the entire frame (from sync code to end of right subframe). Write the 2-byte CRC.
-
-### 3.4 CRC Tables (`src/crc.rs`)
-Do not compute polynomials on the fly. Hardcode the precomputed `[u8; 256]` for CRC-8 (`0x07` polynomial) and `[u16; 256]` for CRC-16 (`0x8005` polynomial). Provide `crc8(data: &[u8]) -> u8` and `crc16(data: &[u8]) -> u16`.
-
-## 4. Validation
-Write a `bin/test_capture.rs` that imports both crates, loops 100 times (approx 8.5 seconds), collects the encoded frame bytes, prepends the `stream_header`, and writes it to `test.flac`. Open the file in VLC to confirm flawless playback and pure, uncorrupted audio.
+## 5. Error Recovery Matrix
+- **`/proc/asound/cards` missing or unreadable:** `panic!` on startup. The environment is improperly configured.
+- **Requested ALSA format rejected (Hardware Fallback):** `panic!` on startup. The device does not support `S24_LE` at 48kHz. Do not silently proceed with distorted audio.
+- **`EPIPE` during loop:** As defined above, inject 8192 zeroes, call `IOCTL_PREPARE`, and continue.
+- **`ENODEV` (Device disconnected mid-stream):** Break the loop, log a fatal error, and trigger the global Tokio cancellation token to initiate a graceful shutdown of the entire system.
