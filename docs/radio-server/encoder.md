@@ -20,7 +20,7 @@ The `FlacEncoder` holds the configuration:
 *   Frame Counter: (internal state)
 
 It exposes two methods:
-*   `stream_header() -> Vec<u8>`: Returns the complete stream header (`fLaC` marker + `STREAMINFO` block). This is called once per encoder instance and cached.
+*   `stream_header() -> Vec<u8>`: Returns the complete stream header (`fLaC` marker + `STREAMINFO` block). This is called once per encoder instance and cached. Note: The `STREAMINFO` block must be written with the `last-metadata-block` flag set (`0x80`), as it is the only metadata block in the segments.
 *   `encode_frame(interleaved: &[i32]) -> &[u8]`: Takes interleaved samples and returns a slice pointing into an internal, pre-allocated output buffer containing exactly one FLAC frame.
 
 **Contract:** `encode_frame` must perform zero allocations in the hot path. The returned slice is valid until the next call.

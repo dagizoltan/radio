@@ -70,7 +70,7 @@ This bypasses the local `minio` and `client` services. The server will now encod
 ## Step 4: Deploy the Client to Deno Deploy
 
 1.  Link your GitHub repository to Deno Deploy or use the `deployctl` CLI.
-2.  Set the entrypoint file to `radio-client/main.tsx`.
+2.  Set the entrypoint file to `radio-client/main.js`.
 3.  Configure the environment variables in the Deno Deploy dashboard:
     *   `R2_PUBLIC_URL`: The public URL configured in Step 1 (e.g., `https://pub-xxxxxx.r2.dev/my-radio-stream`).
 
@@ -83,8 +83,8 @@ Once deployed, users can visit the Deno Deploy URL to listen to the live stream.
 The ThinkPad has a real-world upload bandwidth of approximately **10.68 Mbps**.
 
 - **HQ Segment Size:** 10.24s × 48000 Hz × 3 bytes × 2 channels = **2,949,120 bytes (~2.95 MB)**
-- **LQ Segment Size:** Opus VBR at 128 kbps target × 10.24s = **~102–225 KB** (average ~164 KB). For worst-case upload bandwidth planning, use the upper bound of **~225 KB** per segment. See the CDN Edge Caching section of [Design Decisions](../architecture/decisions.md) for rationale.
-- **Required Upload Speed (both streams, worst case):** `((2.95 + 0.225) × 8) / 10.24 ≈ 2.48 Mbps` continuous. At average LQ size (164 KB): `((2.95 + 0.164) × 8) / 10.24 ≈ 2.43 Mbps`.
+- **LQ Segment Size:** 24kHz/16-bit FLAC × 10.24s = **~985 KB**.
+- **Required Upload Speed (both streams, worst case):** `((2.95 + 0.985) × 8) / 10.24 ≈ 3.07 Mbps` continuous.
 - **Headroom:** The 10.68 Mbps connection provides comfortable headroom.
 
 ### Storage Estimation
@@ -92,7 +92,7 @@ The ThinkPad has a real-world upload bandwidth of approximately **10.68 Mbps**.
 The system maintains a rolling window of exactly 10 segments per quality stream on R2 at any given time.
 
 - **HQ segments:** 10 × ~2.95 MB = **~29.5 MB**
-- **LQ segments:** 10 × ~160 KB (average, VBR range 100–220 KB) = **~1.6 MB average**
+- **LQ segments:** 10 × ~985 KB = **~9.85 MB**
 - **Manifest:** negligible (~200 bytes)
 - **Total steady-state: ~30.4 MB**
 

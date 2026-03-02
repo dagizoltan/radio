@@ -10,7 +10,7 @@ Every FLAC stream (and every standalone segment file) must begin with exactly 38
 
 1.  **Marker (4 bytes):** The ASCII string `fLaC` (`0x66`, `0x4c`, `0x61`, `0x43`).
 2.  **STREAMINFO Block (34 bytes):**
-    *   Block header: `0x00` (type 0: STREAMINFO, last-metadata-block flag unset) followed by 24-bit length `0x000022` (34 bytes).
+    *   Block header: `0x80` (type 0: STREAMINFO, last-metadata-block flag SET — bit 7 = 1). The STREAMINFO block is always the only metadata block in these segments, so the last-metadata-block flag MUST be set. Using `0x00` causes compliant decoders to expect another metadata block after STREAMINFO and misparse the subsequent FLAC frame sync code as a metadata block header, silently corrupting the decode. Followed by 24-bit length `0x000022` (34 bytes).
     *   Min block size: `16` bits
     *   Max block size: `16` bits
     *   Min frame size: `24` bits (can be 0 if unknown)
@@ -20,6 +20,8 @@ Every FLAC stream (and every standalone segment file) must begin with exactly 38
     *   Bits per sample: `5` bits (`23` for 24-bit)
     *   Total samples: `36` bits (`0` if streaming/unknown)
     *   MD5 signature: 16 bytes (all zeros if uncalculated).
+
+All STREAMINFO fields are written consecutively as a bit-packed sequence with NO byte alignment padding between fields. The BitWriter must not flush/align to byte boundaries between fields. The total bit count (16+16+24+24+20+3+5+36+128 = 272 bits = 34 bytes) aligns exactly to a byte boundary at the end, so no padding is needed. This is distinct from the frame header, where the CRC-8 is written byte-aligned after the UTF-8 frame number.
 
 ## Frame Header
 

@@ -31,7 +31,9 @@ The device is opened with `O_RDWR | O_NONBLOCK`.
 
 **CRITICAL CONSTRAINT (Hardware Parameter Validation):** ALSA devices (especially USB interfaces) will sometimes silently reject specific hardware parameters and fall back to their nearest supported capability if the `ioctl` isn't checked rigorously. After calling `IOCTL_HW_PARAMS`, the capture task **must read back the active hardware parameters** from the `SndrPcmHwParams` struct and verify they exactly match the requested configuration (48000Hz, 2 channels, and the exact sample format like `S24_LE` or `S32_LE`). If they do not match, the process must log a fatal error and exit, rather than recording corrupted audio.
 
-**CRITICAL CONSTRAINT (Sign-Extension):** Because ALSA's `S24_LE` format stores 24-bit audio in the lower 3 bytes of a 32-bit word, the capture crate **must** sign-extend the 24th bit into the top 8 bits when converting to a standard Rust `i32`. Without sign-extension, negative audio samples will be interpreted as massive positive integers, resulting in extreme distortion when normalized to `f32` later in the pipeline.
+**CRITICAL CONSTRAINT (Sign-Extension):** Because ALSA's `S24_LE` format stores 24-bit audio in the lower 3 bytes of a 32-bit word, the capture crate must sign-extend the 24th bit into the top 8 bits using:
+`let sample: i32 = (raw_word as i32) << 8 >> 8;`
+where raw_word is the u32 read from the ALSA S24_LE buffer. The arithmetic right shift (>>) propagates the sign bit. Do not use logical right shift (>>>) or cast directly to i32 without shifting — negative audio samples would be read as large positive integers, producing extreme distortion when normalized to f32.
 
 ### #[repr(C)] Structs
 
@@ -64,11 +66,12 @@ An ALSA buffer overrun (xrun) occurs when the kernel fills the capture buffer fa
 1. Detect `EPIPE` from `IOCTL_READI_FRAMES`.
 2. Log `WARN: ALSA xrun detected on period {n} — recovering`.
 3. Increment the `radio_capture_overruns_total` Prometheus counter.
-4. Call `IOCTL_PREPARE` on the file descriptor to reset the hardware state.
-5. If `IOCTL_PREPARE` succeeds, loop back to `async_fd.readable()` and resume normally.
-6. If `IOCTL_PREPARE` fails, log `ERROR: ALSA prepare failed after xrun ({errno}) — retrying in 100ms` and sleep before retrying.
+4. Write exactly 4096 frames (one period) of pure silence (zero-padded buffer) to the archive encoder. This ensures that the overall timeline and frame counts remain perfectly synced, replacing the lost audio with pure silence rather than a structural discontinuity in the FLAC stream.
+5. Call `IOCTL_PREPARE` on the file descriptor to reset the hardware state.
+6. If `IOCTL_PREPARE` succeeds, loop back to `async_fd.readable()` and resume normally.
+7. If `IOCTL_PREPARE` fails, log `ERROR: ALSA prepare failed after xrun ({errno}) — retrying in 100ms` and sleep before retrying.
 
-**Archive impact:** Each xrun results in one lost ALSA period (~85ms of audio) from the local archive. This is already tracked by the `capture_overruns_total` counter and the `vu` SSE event gap. Any non-zero value for `radio_capture_overruns_total` should trigger operator investigation per the observability baseline.
+**Archive impact:** While the silence padding prevents a structural timeline discontinuity, each xrun still represents one lost ALSA period (~85ms of audio) from the true analog capture. This is tracked by the `capture_overruns_total` counter and the `vu` SSE event gap. Any non-zero value for `radio_capture_overruns_total` should trigger operator investigation per the observability baseline.
 **Mitigation strategy:** To minimize `EPIPE` xruns and prioritize the pristine local archive, the `radio-server` capture thread should be configured with `SCHED_FIFO` real-time scheduling priority (via `libc::sched_setscheduler` or equivalent) on startup. This ensures the capture thread preempts normal OS processes and reads the hardware buffer reliably before an overrun occurs.
 
 ## Critical Constraints

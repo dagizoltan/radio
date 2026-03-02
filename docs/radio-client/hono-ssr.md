@@ -1,6 +1,6 @@
-# Hono SSR (main.tsx)
+# Hono SSR (main.js)
 
-The `main.tsx` file is the entry point for the Deno application. It uses the Hono framework and its JSX engine to provide Server-Side Rendering (SSR) and injects initial state for the client.
+The `main.js` file is the entry point for the Deno application. It uses the Hono framework and its JSX engine to provide Server-Side Rendering (SSR) and injects initial state for the client.
 
 ## Server-Side Rendering
 
@@ -20,7 +20,7 @@ When a client makes a `GET /` request, the server executes the following sequenc
 
 ### Direct S3/R2 Fetch
 
-**CRITICAL CONSTRAINT:** The Deno server must not proxy audio segments. They are fetched directly from `R2_PUBLIC_URL` by the browser Web Component. The Deno server's post-SSR responsibility is serving static assets and proxying the `manifest.json`. Deno Deploy imposes strict egress bandwidth limits. The `radio-player` client-side script fetches the `.flac` and `.opus` chunks *directly* from the `R2_PUBLIC_URL` (Cloudflare CDN). This bypasses the Deno proxy entirely, transferring the massive bandwidth load of thousands of simultaneous streaming users completely onto Cloudflare R2's free-egress CDN.
+**CRITICAL CONSTRAINT:** The Deno server must not proxy audio segments. They are fetched directly from `R2_PUBLIC_URL` by the browser Web Component. The Deno server's post-SSR responsibility is serving static assets and proxying the `manifest.json`. Deno Deploy imposes strict egress bandwidth limits. The `radio-player` client-side script fetches the `.flac` segments *directly* from the `R2_PUBLIC_URL` (Cloudflare CDN). This bypasses the Deno proxy entirely, transferring the massive bandwidth load of thousands of simultaneous streaming users completely onto Cloudflare R2's free-egress CDN.
 
 *Requirement:* The S3/R2 bucket must have a strict CORS policy enabled (`Access-Control-Allow-Origin` matching the Deno Deploy URL) to allow the browser client to fetch these segments directly.
 
@@ -67,7 +67,7 @@ On any error path, the page renders with `data-live="false"` and the client reco
 
 ### `GET /static/:file`
 
-*   **Action:** Serves static assets (`style.css`, `player.js`, `worklet.js`, `flac_decoder.js`, `flac_decoder_bg.wasm`, `opus_decoder.js`, `opus_decoder_bg.wasm`) directly from the local `./static/` directory.
+*   **Action:** Serves static assets (`style.css`, `player.js`, `worklet.js`, `flac_decoder.js`, `flac_decoder_bg.wasm`) directly from the local `./static/` directory.
 
 ### SSE Proxying Constraints
 

@@ -1,6 +1,6 @@
-# AudioWorklet (islands/worklet.ts)
+# AudioWorklet (islands/worklet.js)
 
-The `islands/worklet.ts` file defines the `AudioWorkletProcessor` that runs on the browser's dedicated audio rendering thread.
+The `islands/worklet.js` file defines the `AudioWorkletProcessor` that runs on the browser's dedicated audio rendering thread.
 
 ## Processor Registration
 
@@ -37,10 +37,11 @@ The `process(inputs, outputs, parameters)` method is called by the Web Audio API
     *   If `isBuffering == true`, output silence (zeroes). Check if `samplesAvailable >= 192000` (e.g., 2 seconds of 48kHz stereo). If yes, set `isBuffering = false` and post a `{ type: "BUFFERING_COMPLETE" }` message back to the main thread to hide the UI spinner.
     *   If `isBuffering == false` and `samplesAvailable < 256`, a buffer underrun has occurred. Set `isBuffering = true` immediately, output silence, and post a `{ type: "BUFFERING_START" }` message to the main thread to show a UI spinner. Wait for the 2-second threshold to be crossed again before resuming playback.
 3.  **Demux and Volume:** If `isBuffering == false`, pull exactly 256 samples from the `ringBuffer` starting at `readPointer`, wrapping around if necessary.
-    *   It iterates 128 times.
-    *   Even indices map to the left output channel: `outputs[0][0][i]`.
-    *   Odd indices map to the right output channel: `outputs[0][1][i]`.
-    *   Each sample is multiplied by the current `parameters.volume[0]` value.
+    Iterate i from 0 to 127 (128 iterations total, one per output frame):
+      `outputs[0][0][i] = ringBuffer[(readPointer + i * 2    ) % ringBuffer.length] * volume;`
+      `outputs[0][1][i] = ringBuffer[(readPointer + i * 2 + 1) % ringBuffer.length] * volume;`
+    After the loop: `readPointer = (readPointer + 256) % ringBuffer.length;`
+    `samplesAvailable -= 256;`
 4.  **Queue Management:** As samples are read, the `readPointer` advances and `samplesAvailable` decreases. This zero-allocation method guarantees the GC is never provoked on the audio thread.
 5.  **Keep Alive:** Returns `true` to ensure the worklet continues to be called.
 

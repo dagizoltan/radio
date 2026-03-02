@@ -1,6 +1,6 @@
-# Player Web Component (islands/player.ts)
+# Player Web Component (islands/player.js)
 
-The `islands/player.ts` file defines the interactive client-side logic for the `<radio-player>` Web Component.
+The `islands/player.js` file defines the interactive client-side logic for the `<radio-player>` Web Component.
 
 ## Initialization
 
@@ -12,7 +12,7 @@ When the element is inserted into the DOM, `connectedCallback` fires:
 
 1.  **Render:** It populates `this.innerHTML` with the player's UI (if not already hydrated by SSR):
     *   A `<canvas>` element for the waveform.
-    *   A metadata section displaying the title and a Quality Selector toggle (e.g., `<select>` or buttons for `HQ` / `LQ`). HQ displays "Hi-Res · 48kHz · 24-bit · FLAC (Lossless)", LQ displays "Standard · 48kHz · Opus · 128kbps".
+    *   A metadata section displaying the title and a Quality Selector toggle (e.g., `<select>` or buttons for `HQ` / `LQ`). HQ displays "Hi-Res · 48kHz · 24-bit · FLAC (Lossless)", LQ displays "Standard · 24kHz · 16-bit · FLAC".
     *   A controls row containing a play/stop button, an animated live indicator dot, a latency display, and a volume `<input type="range">`.
 2.  **Event Binding:** It attaches click listeners to the play/stop button, input listeners to the volume slider, and change listeners to the Quality Selector.
 
@@ -80,6 +80,13 @@ async _acquireLock() {
     console.error("Lock error", err);
   });
 
+  // Important: When a background tab acquires the lock after the active tab closes, the lock
+  // callback fires asynchronously — outside any user gesture. Attempting to create an
+  // AudioContext here will be blocked by autoplay policy on Chrome and Safari. Do NOT auto-start
+  // playback on lock acquisition. Instead, show a 'Playback transferred — click Play to start'
+  // UI state and enable the play button. The AudioContext must be created inside a fresh click
+  // handler.
+
   this._showMessage("Stream is already playing in another tab.");
   this._showTransferButton(); // Allow user to steal the lock
 }
@@ -96,24 +103,30 @@ async _acquireLock() {
 When the user clicks the "Play" button, the following sequence occurs:
 
 1.  **AudioContext:** Create a new `AudioContext` with `{ sampleRate: 48000 }`.
-2.  **Worklet Loading:** Await `audioCtx.audioWorklet.addModule("/static/worklet.js")`.
+2.  **Worklet Loading:**
+    try {
+      await audioCtx.audioWorklet.addModule('/static/worklet.js');
+    } catch (err) {
+      console.error('Worklet load failed:', err);
+      audioCtx.close();
+      this._showError('Audio engine failed to load. Please refresh the page.');
+      this._resetPlayButton();
+      return;
+    }
     **Ring Buffer Sizing:** The AudioWorklet ring buffer must hold at least 2 full 10-second segments: `48000 × 2 channels × 20 seconds = 1,920,000 floats` (~7.3 MB). This prevents underrun when a segment takes close to its full 10-second window to download on a degraded connection.
 3.  **Node Creation:** Create an `AudioWorkletNode` named `"radio-processor"`. Pass the initial volume from the slider as a parameter.
 4.  **Analyser Chain:** Create an `AnalyserNode` for the waveform visualizer. Chain them: `workletNode.connect(analyserNode).connect(audioCtx.destination)`.
 5.  **MediaSession Integration:** Register the stream metadata with the OS-level media controls (e.g., lock screen, keyboard play/pause keys) using `navigator.mediaSession.metadata = new MediaMetadata({ title: "Lossless Vinyl Radio", artist: "Live Stream" });` and set action handlers (`setActionHandler('play', ...)`).
 6.  **WASM Import:** Dynamically import the WASM decoder module:
     ```javascript
-    // Import both decoders once during initialisation
+    // Import the single FLAC decoder used for both streams
     import initFlac, { FlacDecoder } from "/static/flac_decoder.js";
-    import initOpus, { OpusDecoder } from "/static/opus_decoder.js";
-    await Promise.all([initFlac(), initOpus()]);
+    await initFlac();
 
-    // Active decoder reference, swapped on quality change
-    const flacDecoder = new FlacDecoder();
-    const opusDecoder = new OpusDecoder();
-    let decoder = currentQuality === 'hq' ? flacDecoder : opusDecoder;
+    // Active decoder reference
+    let decoder = new FlacDecoder();
 
-    // On quality switch: call `decoder.reset()`, send `"FLUSH"` to the worklet, then swap the `decoder` reference, and advance to the NEXT segment index to avoid audible rewind.
+    // On quality switch: call `decoder.reset()`, send `"FLUSH"` to the worklet, and advance to the NEXT segment index to avoid audible rewind. The decoder will automatically adjust its parameters based on the new FLAC stream headers it receives.
     ```
 7.  **Fetch Loop (`setInterval` / Web Worker):** Start the main fetch loop. Crucially, the fetch polling loop must **not** rely on `requestAnimationFrame` or `setTimeout` running on the main thread, because browsers heavily throttle (or pause entirely) background tabs. To keep audio playing smoothly while the listener browses other tabs, the fetch loop should be driven by a `setInterval` running in a dedicated Web Worker, which passes fetch commands or chunk events back to the main thread `MessagePort`.
 8.  **Waveform Animation Loop:** The visual waveform updates independently using `requestAnimationFrame`. When the tab is backgrounded, it correctly pauses rendering to save battery, but the separate Web Worker continues fetching audio chunks.
@@ -126,21 +139,20 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   **Optimization:** Rely on the `Cache-Control: s-maxage=5` header set by the Deno server to utilize CDN edge caching.
     *   If offline, update the UI and retry after a delay.
     *   If live, extract `latest` segment index and `segment_s` duration.
-2.  **Buffering Strategy:** Start playing 2 segments behind the `latest` index to build a small buffer against network jitter.
+2.  **Buffering Strategy:** Start playing at `currentIndex = Math.max(0, latest - 2)` to handle the case where latest < 2 at stream startup. To support fluctuating network conditions, the client should dynamically track download bandwidth. If the bandwidth drops close to the required streaming rate, the player should dynamically expand its internal buffer target (e.g., buffering 3 or 4 segments ahead) rather than relying on a static 2-segment pre-roll.
 3.  **Jump-Ahead Logic:**
     *   If the player's current segment index is ahead of `latest`, sleep for `segment_s / 2` and repoll.
     *   If the player falls more than 3 segments behind `latest` (e.g., due to pausing or network stall), immediately jump to `latest - 1`.
-    *   **Server Restart Detection:** If the `latest` index abruptly drops by a large amount or resets to `0` (and it is not a normal rollover from 99,999,999), this indicates the backend server restarted. The continuous Opus stream state has been broken. In this case, call `decoder.reset()` before fetching the new segment to avoid decoding errors or audio glitches.
+    *   **Server Restart Detection:** If the `latest` index abruptly drops by a large amount or resets to `0` (and it is not a normal rollover from 99,999,999), this indicates the backend server restarted. In this case, call `decoder.reset()` before fetching the new segment to avoid decoding errors or audio glitches.
 4.  **Segment Streaming (Direct to CDN):**
     *   Construct the correct URL path using the `R2_PUBLIC_URL` base injected by the server.
     *   Construct the segment URL based on quality and append the security token if present:
     ```javascript
-    const ext = currentQuality === 'hq' ? 'flac' : 'opus';
     const padded = String(currentIndex).padStart(8, '0');
-    let url = `${this.dataset.r2Url}/live/${currentQuality}/segment-${padded}.${ext}`;
+    let url = `${this.dataset.r2Url}/live/${currentQuality}/segment-${padded}.flac`;
     if (this.dataset.token) url += `?token=${this.dataset.token}`;
     ```
-    HQ segments are FLAC (`.flac`). LQ segments are raw continuous Opus packets (`.opus`). Quality is differentiated by path prefix and file extension.
+    Both HQ and LQ segments are FLAC (`.flac`). Quality is differentiated solely by the path prefix.
     *   **Robust Fetching:** Wrap the `fetch()` call with an `AbortController` timeout (e.g., 15 seconds) to prevent the promise from hanging indefinitely if the network silently drops.
     *   **404 Handling:** If the fetch returns a `404 Not Found` (which can happen if the client is lagging and the rolling window has deleted the segment, or if the server restarted and performed a startup sweep), abort the current segment fetch, sleep briefly, and immediately poll the manifest to resynchronize the `latest` index.
     *   **403 Handling:** If the fetch returns a `403 Forbidden`, the injected security token has likely expired (e.g., the Deno SSR server restarted or the listener was offline during a "Tunnel Scenario" for longer than the token lifetime). The fetch loop must explicitly request a new token from the Deno server (e.g., via a `/api/token` endpoint) before retrying.
@@ -150,6 +162,9 @@ The core of the player is the fetch loop, which continuously polls for new segme
         *   If `pcm` (a `Float32Array`) has length > 0, transfer it to the worklet to avoid main-thread garbage collection. **CRITICAL:** Do NOT transfer `pcm.buffer` directly, as it points to the WASM instance's linear memory. Transferring it detaches the memory buffer, instantly crashing the WASM decoder. Instead, you **must** implement a buffer pool to copy the data into and transfer to the worklet. Creating a `new Float32Array(pcm)` on every chunk will eventually trigger main-thread garbage collection pauses. Use a `MessageChannel` (or simply `port.onmessage`) where the Worklet returns empty buffers for the decoder to reuse, achieving true zero-allocation playback:
         ```javascript
         // Assume `pool` is an array of recycled Float32Arrays
+        // The pcm value returned by decoder.push() may be a Float32Array view over WASM linear
+        // memory (if the decoder uses the zero-copy optimization). Always copy via pcmCopy.set(pcm)
+        // before transferring. Never call postMessage(pcm, [pcm.buffer]) directly.
         const pcmCopy = pool.pop() || new Float32Array(pcm.length);
         pcmCopy.set(pcm); // Copy out of WASM bounds into pooled buffer
         workletNode.port.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer buffer
@@ -159,11 +174,10 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   The current `reader.cancel()` is called.
     *   A `"FLUSH"` message is sent to the `AudioWorklet` via `postMessage` to instantly clear any buffered PCM data. This prevents an audible pitch-shift or pop when the new codec chunks arrive.
     *   The `currentQuality` state updates.
-    *   The fetch loop immediately attempts to fetch the *next* `currentIndex` (`currentIndex + 1`) using the new quality path (`hq` FLAC or `lq` Opus).
+    *   The fetch loop immediately attempts to fetch the *next* `currentIndex` (`currentIndex + 1`) using the new quality path (`hq` or `lq`).
     **Audio forward skip on quality switch:** Because the fetch loop fetches the *next* `currentIndex` from byte 0 in the new codec, the listener may experience a slight forward skip (up to 10 seconds of audio) after a quality switch (the portion of the current segment skipped). This produces a clean decode boundary with no codec state bleed and provides a better user experience than re-playing up to 10 seconds of already-heard audio.
 6.  **Iteration:** When `reader.read()` returns `done: true` normally, increment the `currentIndex`. **CRITICAL Codec Boundary:**
-    *   If `currentQuality === 'hq'`, you **must** call `decoder.reset()` before fetching the next segment. Every HQ segment is a standalone FLAC file starting with a `fLaC` stream header; `reset()` tells the WASM decoder to expect and parse this header instead of treating it as garbage frame data.
-    *   If `currentQuality === 'lq'`, you **must not** call `decoder.reset()`. The Opus stream is raw and continuous across segments; resetting the decoder would break the stream state.
+    *   You **must** call `decoder.reset()` before fetching the next segment, regardless of quality. Every segment (HQ or LQ) is a standalone FLAC file starting with a `fLaC` stream header; `reset()` tells the WASM decoder to expect and parse this header instead of treating it as garbage frame data.
 7.  **Latency Display:** Calculate and update the UI with the estimated latency: `(latest - currentIndex) * segment_s` seconds behind live.
 ## AudioContext Lifecycle and Background Tab Handling
 
@@ -213,12 +227,14 @@ workletNode.port.onmessage = (e) => {
 ### AudioContext State Change Handler
 ```javascript
 audioCtx.onstatechange = () => {
-  if (audioCtx.state === "suspended" && document.visibilityState === "visible") {
+  if ((audioCtx.state === "suspended" || audioCtx.state === "interrupted")
+      && document.visibilityState === "visible") {
     // Context was suspended unexpectedly while tab is visible (e.g. OS audio focus lost)
     audioCtx.resume();
   }
 };
 ```
+'interrupted' is an iOS Safari-specific state triggered by phone calls, Siri activation, or other audio session interruptions. It must be treated identically to 'suspended' — call audioCtx.resume() to restore playback. Omitting this check causes playback to permanently break after any iOS audio interruption.
 
 ### MediaSession Integration
 Register MediaSession action handlers to integrate with OS-level media controls (lock screen, headphone buttons, Bluetooth):

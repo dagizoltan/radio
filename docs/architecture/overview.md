@@ -15,7 +15,7 @@ The Lossless Vinyl Radio Streaming System is a two-part architecture designed to
 | Lenovo ThinkPad X270 (Ubuntu Linux)                       |
 |                                                           |
 |  +-----------------------------------------------------+  |
-|  | radio-server (Rust - 3 Processes)                   |  |
+|  | radio-server (Rust - 3 Tokio async tasks within a single OS process) |  |
 |  |                                                     |  |
 |  |  1. [ HQ Recorder ] -> [ Local Archive ]            |  |
 |  |           |                                         |  |
@@ -51,7 +51,6 @@ The Lossless Vinyl Radio Streaming System is a two-part architecture designed to
    |
    +-- <radio-player> Web Component
    +-- WASM FLAC Decoder (HQ)
-   +-- WASM Opus Decoder (LQ)
    +-- AudioWorklet
 ```
 
@@ -59,17 +58,17 @@ The Lossless Vinyl Radio Streaming System is a two-part architecture designed to
 
 1. **Analog Capture:** The analog mixer's REC OUT is connected to inputs 1 and 2 of the Behringer UMC404HD USB audio interface.
 2. **ALSA Interface:** The `radio-server` captures the audio directly from the Linux kernel ALSA interface using raw ioctls.
-3. **Process 1: HQ Recorder:** The raw PCM audio is captured and encoded into high-quality FLAC verbatim subframes. It is saved directly to a local `./recordings` directory. This process isolates the archival bit-perfect copy.
-4. **Process 2: Converter:** A separate converter process consumes the raw audio and encodes it directly into multiple qualities (HQ FLAC and LQ Opus) without any signal processing.
-5. **Process 3: Cloud Uploader:** The multi-quality segments and a `manifest.json` are uploaded to an S3-compatible storage backend ([Cloudflare R2 in production, MinIO locally](../deployment/docker-compose.md)) using robust, standard crates (`object_store` or `aws-sdk-s3`). The uploader manages the rolling window, supplemented by S3 Object Lifecycle Rules for robust cleanup.
+3. **Task 1: HQ Recorder:** The raw PCM audio is captured and encoded into high-quality FLAC verbatim subframes. It is saved directly to a local `./recordings` directory. This task isolates the archival bit-perfect copy.
+4. **Task 2: Converter:** A separate converter task consumes the raw audio and encodes it directly into multiple qualities (HQ FLAC and LQ FLAC). The LQ path uses simple decimation to downsample the audio.
+5. **Task 3: Cloud Uploader:** The multi-quality segments and a `manifest.json` are uploaded to an S3-compatible storage backend ([Cloudflare R2 in production, MinIO locally](../deployment/docker-compose.md)) using robust, standard crates (`object_store` or `aws-sdk-s3`). The uploader manages the rolling window, supplemented by S3 Object Lifecycle Rules for robust cleanup.
 6. **Listener Client:** The listener visits the Deno Deploy frontend (`radio-client`). The frontend performs a server-side manifest fetch from R2 to populate the initial live-status badge and inject `data-*` attributes. It serves the HTML shell and static assets (JS, WASM). **Crucially, the Deno server acts as a proxy for all subsequent `manifest.json` polling by clients**, utilizing edge caching (`Cache-Control: s-maxage=5`) to prevent massive Class B operation costs on the R2 bucket.
-7. **Browser Playback:** The browser loads a Web Component island that continuously polls the proxied manifest. However, it fetches the actual audio segments *directly* from the Cloudflare R2 edge CDN (bypassing the Deno proxy entirely to save bandwidth). The segments are decoded in the browser using a [WASM FLAC decoder](../radio-client/wasm-decoder.md) for HQ segments or a [WASM Opus decoder](../radio-client/wasm-decoder.md) for LQ segments (selected automatically based on quality setting), and played via an [AudioWorklet](../radio-client/worklet.md).
+7. **Browser Playback:** The browser loads a Web Component island that continuously polls the proxied manifest. However, it fetches the actual audio segments *directly* from the Cloudflare R2 edge CDN (bypassing the Deno proxy entirely to save bandwidth). The segments are decoded in the browser using a single [WASM FLAC decoder](../radio-client/wasm-decoder.md) that dynamically adjusts to the sample rate of the fetched segment, and played via an [AudioWorklet](../radio-client/worklet.md).
 
 ## Two-Codebase Split
 
 The system is strictly divided into two independent codebases:
 
-1. **`radio-server`:** A pure Rust codebase running locally on the ThinkPad. It is structurally split into three main processes: one for capturing/archiving HQ audio, one for converting the stream to multi-quality (LQ) chunks, and one for uploading chunks to the cloud. It also serves a local operator monitor UI.
+1. **`radio-server`:** A pure Rust codebase running locally on the ThinkPad. It is structurally split into three main tasks: one for capturing/archiving HQ audio, one for converting the stream to multi-quality (LQ) chunks, and one for uploading chunks to the cloud. It also serves a local operator monitor UI.
 2. **`radio-client`:** A Deno + Hono application deployed to Deno Deploy. It serves the public listener interface, proxies the `manifest.json` to leverage edge caching, and provides the Web Component and WASM decoder for browser playback. Segment fetching is performed browser-side directly against R2.
 
 ## Docker Topology
