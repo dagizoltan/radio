@@ -80,6 +80,13 @@ async _acquireLock() {
     console.error("Lock error", err);
   });
 
+  // Important: When a background tab acquires the lock after the active tab closes, the lock
+  // callback fires asynchronously — outside any user gesture. Attempting to create an
+  // AudioContext here will be blocked by autoplay policy on Chrome and Safari. Do NOT auto-start
+  // playback on lock acquisition. Instead, show a 'Playback transferred — click Play to start'
+  // UI state and enable the play button. The AudioContext must be created inside a fresh click
+  // handler.
+
   this._showMessage("Stream is already playing in another tab.");
   this._showTransferButton(); // Allow user to steal the lock
 }
@@ -96,7 +103,16 @@ async _acquireLock() {
 When the user clicks the "Play" button, the following sequence occurs:
 
 1.  **AudioContext:** Create a new `AudioContext` with `{ sampleRate: 48000 }`.
-2.  **Worklet Loading:** Await `audioCtx.audioWorklet.addModule("/static/worklet.js")`.
+2.  **Worklet Loading:**
+    try {
+      await audioCtx.audioWorklet.addModule('/static/worklet.js');
+    } catch (err) {
+      console.error('Worklet load failed:', err);
+      audioCtx.close();
+      this._showError('Audio engine failed to load. Please refresh the page.');
+      this._resetPlayButton();
+      return;
+    }
     **Ring Buffer Sizing:** The AudioWorklet ring buffer must hold at least 2 full 10-second segments: `48000 × 2 channels × 20 seconds = 1,920,000 floats` (~7.3 MB). This prevents underrun when a segment takes close to its full 10-second window to download on a degraded connection.
 3.  **Node Creation:** Create an `AudioWorkletNode` named `"radio-processor"`. Pass the initial volume from the slider as a parameter.
 4.  **Analyser Chain:** Create an `AnalyserNode` for the waveform visualizer. Chain them: `workletNode.connect(analyserNode).connect(audioCtx.destination)`.
@@ -126,7 +142,7 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   **Optimization:** Rely on the `Cache-Control: s-maxage=5` header set by the Deno server to utilize CDN edge caching.
     *   If offline, update the UI and retry after a delay.
     *   If live, extract `latest` segment index and `segment_s` duration.
-2.  **Buffering Strategy:** Start playing 2 segments behind the `latest` index to build a small buffer against network jitter.
+2.  **Buffering Strategy:** Start playing at currentIndex = Math.max(0, latest - 2) to handle the case where latest < 2 at stream startup.
 3.  **Jump-Ahead Logic:**
     *   If the player's current segment index is ahead of `latest`, sleep for `segment_s / 2` and repoll.
     *   If the player falls more than 3 segments behind `latest` (e.g., due to pausing or network stall), immediately jump to `latest - 1`.
@@ -150,6 +166,9 @@ The core of the player is the fetch loop, which continuously polls for new segme
         *   If `pcm` (a `Float32Array`) has length > 0, transfer it to the worklet to avoid main-thread garbage collection. **CRITICAL:** Do NOT transfer `pcm.buffer` directly, as it points to the WASM instance's linear memory. Transferring it detaches the memory buffer, instantly crashing the WASM decoder. Instead, you **must** implement a buffer pool to copy the data into and transfer to the worklet. Creating a `new Float32Array(pcm)` on every chunk will eventually trigger main-thread garbage collection pauses. Use a `MessageChannel` (or simply `port.onmessage`) where the Worklet returns empty buffers for the decoder to reuse, achieving true zero-allocation playback:
         ```javascript
         // Assume `pool` is an array of recycled Float32Arrays
+        // The pcm value returned by decoder.push() may be a Float32Array view over WASM linear
+        // memory (if the decoder uses the zero-copy optimization). Always copy via pcmCopy.set(pcm)
+        // before transferring. Never call postMessage(pcm, [pcm.buffer]) directly.
         const pcmCopy = pool.pop() || new Float32Array(pcm.length);
         pcmCopy.set(pcm); // Copy out of WASM bounds into pooled buffer
         workletNode.port.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer buffer
@@ -213,12 +232,14 @@ workletNode.port.onmessage = (e) => {
 ### AudioContext State Change Handler
 ```javascript
 audioCtx.onstatechange = () => {
-  if (audioCtx.state === "suspended" && document.visibilityState === "visible") {
+  if ((audioCtx.state === "suspended" || audioCtx.state === "interrupted")
+      && document.visibilityState === "visible") {
     // Context was suspended unexpectedly while tab is visible (e.g. OS audio focus lost)
     audioCtx.resume();
   }
 };
 ```
+'interrupted' is an iOS Safari-specific state triggered by phone calls, Siri activation, or other audio session interruptions. It must be treated identically to 'suspended' — call audioCtx.resume() to restore playback. Omitting this check causes playback to permanently break after any iOS audio interruption.
 
 ### MediaSession Integration
 Register MediaSession action handlers to integrate with OS-level media controls (lock screen, headphone buttons, Bluetooth):

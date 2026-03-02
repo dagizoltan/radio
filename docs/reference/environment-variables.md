@@ -13,3 +13,5 @@ This document lists all environment variables used across the system, indicating
 | `MINIO_USER` | `docker-compose` (`minio`) | (None) | The root username for the local MinIO instance. | Read by Docker Compose to set `MINIO_ROOT_USER` and pass to `radio-server` as `R2_ACCESS_KEY`. |
 | `MINIO_PASS` | `docker-compose` (`minio`) | (None) | The root password for the local MinIO instance. | Read by Docker Compose to set `MINIO_ROOT_PASSWORD` and pass to `radio-server` as `R2_SECRET_KEY`. |
 | `RUST_LOG` | `radio-server` | `info` | The log level for the Rust binary. | Read by `tracing_subscriber::EnvFilter::from_default_env()` on startup. |
+| `CAPTURE_DEVICE_NAME` | `radio-server` | `"UMC404"` | Substring matched against `/proc/asound/cards` to discover the ALSA card number at runtime. | Read by capture crate init. |
+| `TOKEN_SECRET` | `radio-client` | (None, optional) | HMAC secret for generating short-lived segment access tokens injected into the HTML. If unset, token injection is disabled. | Read by `Deno.env.get("TOKEN_SECRET")` in `main.tsx`. |

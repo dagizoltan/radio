@@ -19,16 +19,20 @@ All state is held in an `Arc<AppState>` and shared safely across tasks:
 
 ## Process Architecture (Tokio Tasks)
 
-The system is logically divided into three primary processes handling audio capture, multi-quality conversion, and cloud upload. These, along with an HTTP task, run concurrently in `main` using `tokio::select!`.
+The system is logically divided into three primary tasks handling audio capture, multi-quality conversion, and cloud upload. These, along with an HTTP task, run concurrently in `main` using `tokio::select!`.
 
-### Process 1: HQ Recorder Task
+All tasks run in a single Tokio runtime. A panic in any task cancels the shared CancellationToken, triggering graceful shutdown of the remaining tasks. For true OS-level crash isolation, each task would need to be a separate binary connected by IPC — this is a future enhancement if archive integrity requirements demand it.
+
+### Task 1: HQ Recorder Task
 
 Handles direct hardware capture and local uncompressed archiving.
 
 1.  Opens the ALSA capture device using the [Capture Crate](capture.md).
 2.  Initializes a high-quality (HQ) `FlacEncoder` instance for raw encoding.
 3.  Creates a new, timestamped staging file directly in the host-mounted volume at `./recordings/recording-{timestamp}.flac`. The `tmpfs` staging approach was removed because it poses a permanent data loss risk in the event of a power failure or Docker crash. A standard SSD can easily handle the 1.5 GB/hour continuous append-only write workload.
+    Writes the archive FlacEncoder's stream_header() as the first bytes of the new file before any frames. On each hourly file rotation, creates a new FlacEncoder instance (so the archive frame counter resets to 0 in each file, making every archive file independently seekable), writes a fresh stream_header(), then continues capture. The archive FlacEncoder instance is entirely separate from the Converter Task's FlacEncoder instance.
 4.  Enters an asynchronous loop, awaiting periods from the capture device.
+    When AppState.streaming is false, the Recorder MUST continue calling IOCTL_READI_FRAMES on every ALSA period wakeup to drain the kernel ring buffer and prevent EPIPE xruns. However, it discards the captured data: it does not encode to FLAC, does not write to the archive file, and does not send PCM to the Converter Task. The ALSA handle remains open and active regardless of the streaming state.
 5.  **For each period (4096 frames):**
     *   Calls `IOCTL_READI_FRAMES` to read the period into an `&mut [i32]` buffer.
     *   **XRUN handling (check first):** If `IOCTL_READI_FRAMES` returns `EPIPE` (ALSA buffer overrun), skip all steps below, call `IOCTL_PREPARE` to reset the hardware, increment `radio_capture_overruns_total`, log a `WARN`, and loop back to `async_fd.readable()`. See the [Capture Crate XRUN Recovery](capture.md#xrun-recovery-epipe-handling) section for the full recovery sequence. The following steps only execute on a successful read (`result > 0`).
@@ -39,12 +43,14 @@ Handles direct hardware capture and local uncompressed archiving.
     *   Emits VU levels to `sse_tx`.
 6.  **Archiving:** Periodically (e.g., **every hour**, or on graceful shutdown), it flushes and closes the current archive file to prevent excessively large file sizes and to isolate failure blast radii. It opens a new timestamped file to continue. (An 8-hour continuous 24-bit/48kHz FLAC file is roughly 8.3 GB; keeping a file of this size open in memory or on disk for hours introduces substantial risk of data corruption if a power failure occurs.)
 
-### Process 2: Converter Task
+### Task 2: Converter Task
 
 Consumes the raw stream and encodes it into multiple qualities (HQ and LQ).
 
 1.  Receives from the bounded `mpsc` channel. The `broadcast` channel carries only JSON event strings for the monitor UI SSE feed. Shutdown is coordinated via a cancellation token, not via the broadcast channel.
-2.  Initializes the audio encoders: one `FlacEncoder` for the HQ stream (24-bit), and one Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`). Before encoding for Opus, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets. Rather than an Ogg container, these raw packets are appended directly into the segment's byte buffer, prefixed by their 2-byte payload length in network byte order (Big Endian), allowing the decoder to slice a continuous stream of Opus packets perfectly gaplessly across 10-second segments.
+2.  Initializes the audio encoders: one `FlacEncoder` for the HQ stream (24-bit), and one Opus encoder (`audiopus::Encoder` configured for `48000 Hz`, `Stereo`, `Application::Audio`, bitrate `128000 bps`). The Converter Task creates and owns its own FlacEncoder instance, separate from the Recorder Task's archive encoder. These two encoder instances are never shared. The Converter's encoder is created once at Converter startup and lives for the process lifetime, giving the Converter a monotonically increasing frame counter across all segments.
+    After creating the HQ FlacEncoder instance, immediately call encoder.stream_header() and write the result into AppState.flac_header (acquiring the Mutex). This must happen before the Converter begins processing any segments. The HTTP Task's /local/:id handler depends on this value being set; it must handle None by returning 503 Service Unavailable with body 'Stream not yet initialized'.
+    Before encoding for Opus, samples are converted from `i32` to `f32` (range `[-1.0, 1.0]`). The Opus encoder produces variable-length packets. Rather than an Ogg container, these raw packets are appended directly into the segment's byte buffer, prefixed by their 2-byte payload length in network byte order (Big Endian), allowing the decoder to slice a continuous stream of Opus packets perfectly gaplessly across 10-second segments.
 
 **Opus PCM Staging Buffer**
 
@@ -73,10 +79,10 @@ On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values
 4.  **Segment Assembly:** Accumulates the encoded frames for both qualities.
     *   *Optimization Strategy:* To prevent constant vector reallocations as frames accumulate, the accumulator `Vec<u8>` for the 10.24-second segment must be pre-allocated with `Vec::with_capacity()`. A 10.24-second 24-bit verbatim FLAC segment contains the raw PCM payload (`48000 * 3 bytes * 2 channels * 10.24s = 2,949,120` bytes) plus the FLAC framing overhead. A 10.24s segment has exactly 120 FLAC frames (since ALSA period is 4096), each contributing a frame header (~10-15 bytes) and a CRC-16 (2 bytes), adding around ~2,040 bytes. To ensure zero reallocations, the buffer must be padded slightly larger than just the PCM size.
     *   **Threshold:** 491,520 frames (10.24 × 48000 Hz). Track a `frame_counter: u64` incremented by `period_frames` (4096) per ALSA period. Pre-allocate accumulator: `Vec::with_capacity(2_955_000)` for HQ (PCM + framing overhead padding).
-    *   Assembles complete, standalone files in memory by prepending the respective stream headers to the filled accumulator.
+    *   Assembles completed files in memory. For the cloud Uploader, the stream header is NOT prepended yet — the Cloud Uploader Task prepends the stream header when uploading to S3 (to produce a standalone FLAC file). The HqBytes sent over the mpsc channel do not contain the stream header.
     *   Sends completed HQ and LQ segment files to the Cloud Uploader via a bounded `tokio::sync::mpsc` channel with capacity **3**. Uses `try_send()` (non-blocking). If the channel is full, logs `WARN: segment {index} dropped — uploader lagging` and discards the segment. Never blocks waiting for the Uploader.
 
-### Process 3: Cloud Uploader Task
+### Task 3: Cloud Uploader Task
 
 Receives completed segments and handles S3 uploads and manifest management.
 
@@ -94,6 +100,12 @@ Receives completed segments and handles S3 uploads and manifest management.
 3.  Loops, receiving assembled segment files.
 4.  **Upload:**
     *   Uploads the segments to S3 using raw HTTP with [AWS Signature V4](aws-sig-v4.md).
+    *   All S3 PUTs must include explicit Content-Type headers:
+        - HQ FLAC segments (.flac):    Content-Type: audio/flac
+        - LQ Opus segments (.opus):    Content-Type: application/octet-stream
+        - manifest.json:               Content-Type: application/json
+        Omitting Content-Type causes some CDN edge nodes to serve segments as application/octet-stream, breaking any fallback native decode paths.
+    *   Upload ordering and atomicity: Upload HQ first, then LQ. The manifest is NOT updated until BOTH the HQ PUT and LQ PUT for segment N have succeeded. If the HQ PUT succeeds but the LQ PUT exhausts all retries, both the HQ upload (already on R2) and the LQ failure are treated as a full segment skip: do not advance the manifest, do not update the rolling window for either quality, log the partial upload at ERROR level and emit an r2 SSE error event. The already-uploaded HQ file will be cleaned up by the startup sweep on next restart or by the S3 lifecycle rule. This ensures clients can always safely fetch both quality paths for any index present in the manifest.
     *   **Resilience:** Uses an exponential backoff retry loop (e.g., 3-5 retries) for the HTTP PUT requests to handle transient network drops. To prevent unbounded channel stalls from backing up the pipeline, the `reqwest` client must be configured with aggressive timeouts (e.g., a `connect_timeout` of 2s and a total `timeout` of 8s). If the HTTP request hits the timeout, it counts as a failure towards the retry limit. Once exhausted, the segment is aggressively dropped, unblocking the channel so the Recorder task is not impacted.
     *   Key format uses quality folders: e.g., `live/hq/segment-{:08}.flac` and `live/lq/segment-{:08}.opus`.
     *   **Immutable Audio Caching:** The `PUT` request for the actual audio segment files (`.flac` and `.opus`) **must** include the `Cache-Control: public, max-age=31536000, immutable` header. Because segments are monotonically numbered and never modified after creation, aggressive caching prevents unnecessary Class B GETs from the origin if multiple users hit the same edge node.
@@ -111,10 +123,12 @@ Receives completed segments and handles S3 uploads and manifest management.
 
     **Client behavior under skipped indices:** The client's jump-ahead logic already handles gaps. If `latest` jumps by 2 (a segment was skipped), the client detects `currentIndex < latest - 3` and snaps to `latest - 1`. No client-side changes are needed.
 
-    **Manifest retry:** The manifest `PUT` uses the same exponential backoff. If the manifest `PUT` fails after all retries, log `ERROR: manifest update failed for segment {index}`. The segment data is already uploaded to R2 (the segment `PUT` succeeded). The `latest` pointer in the manifest simply does not advance. On the next segment cycle, the manifest will be overwritten with the new `latest`. Clients experiencing a stale manifest will detect it via the `updated_at` staleness check (`Date.now() - updated_at > segment_s * 3 * 1000`) and show "Stream may be offline."
+    **Manifest retry:** The manifest `PUT` uses the same exponential backoff. If the manifest `PUT` fails after all retries, log `ERROR: manifest update failed for segment {index}`. The segment data is already uploaded to R2 (the segment `PUT` succeeded). The `latest` pointer in the manifest simply does not advance. On the next segment cycle, the manifest will be overwritten with the new `latest`. Clients experiencing a stale manifest will detect it via the `updated_at` staleness check (`Date.now() - updated_at > segment_s * STALE_MANIFEST_MULTIPLIER * 1000`) and show "Stream may be offline."
 
 5.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 10 segments per quality, it issues `DELETE` requests for the oldest objects. A 10-segment window is strictly required to prevent intermittent 404 errors for clients recovering from lag or fetching immediately after a manifest update.
-6.  Pushes the new HQ segment into `local_segments` (keeping only the last 3) for the local operator monitor playback.
+
+The rolling window VecDeque is held only in RAM and is not persisted to disk. If the server crashes ungracefully (SIGKILL, power loss), the VecDeque is lost. The startup cleanup sweep (Step 1 of Cloud Uploader startup) is the designated recovery mechanism: it re-discovers existing segments via LIST and deletes all of them, resetting to a clean state. This means a crash may leave up to 10 orphaned segments on R2 until the next startup sweep, which is acceptable given the S3 lifecycle rule backup.
+6.  Pushes the new HQ segment (the raw bytes, WITHOUT the stream header) into `local_segments` (keeping only the last 3) for the local operator monitor playback. The HTTP Task prepends the stream header from `AppState.flac_header` when serving `/local/:id`.
 7.  Updates `r2_segment`, `r2_last_ms`, and `r2_uploading`. Emits `r2` status events to `sse_tx` during and after the upload.
 
 ### HTTP Task

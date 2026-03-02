@@ -76,7 +76,12 @@ The automated script applies the following CORS JSON rule using `mc anonymous se
 
 *   **Build**: Built from `radio-client/Dockerfile`.
     *   Uses `denoland/deno:2.0.0` or a multi-stage Rust+Deno image.
-    *   *Build-time Requirement:* The Dockerfile **must** install the Rust toolchain and `wasm-pack` to compile **two** WASM crates: `wasm-pack build --target web` for `decoder/flac/` (producing `flac_decoder.js` + `flac_decoder_bg.wasm`) and for `decoder/opus/` (producing `opus_decoder.js` + `opus_decoder_bg.wasm`). Both sets of outputs must be present in `static/` before the Deno server starts.
+    *   *Build-time Requirement:* The Dockerfile must install: (1) the Rust toolchain with wasm32-unknown-unknown target, (2) wasm-pack, (3) Emscripten (emcc) or a wasi-sdk build of libopus for the WASM target, since audiopus/opus-rs links against the libopus C library and requires it to be compiled to WASM. The FLAC decoder crate (pure Rust) requires only wasm-pack. Build order:
+        ```bash
+        RUN wasm-pack build --target web decoder/flac/
+        RUN wasm-pack build --target web decoder/opus/   # requires libopus WASM
+        ```
+        Validate both .wasm outputs exist in static/ before the Deno server starts.
     *   Pre-caches dependencies with `deno cache main.tsx`.
 *   **Dependencies**: `depends_on: minio-setup` with the `condition: service_completed_successfully` flag.
 *   **Ports**: Exposes port `3000` (Listener Interface).

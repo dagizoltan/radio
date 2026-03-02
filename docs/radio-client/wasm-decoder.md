@@ -55,6 +55,8 @@ The core JavaScript API is `push(bytes: &[u8]) -> Vec<f32>`.
 4.  **Consumption:** Processed bytes are removed from the front of the internal buffer. Unprocessed bytes (a partial frame at the end of a chunk) remain in the buffer for the next `push()` call. **Performance Critical:** Do not use `Vec::drain(..)` or `Vec::remove(0)` to remove processed bytes in a loop, as this causes `O(N^2)` memory shifting inside the WASM linear memory and can cause playback stutters on lower-end devices. Instead, track a read offset integer during the decode loop, and only use `Vec::drain(..offset)` or `slice::copy_within` once per `push()` call to move the unprocessed remainder to the front.
 5.  **Return (Zero-Copy Optimization):** Instead of allocating a new `Vec<f32>` and copying it across the WASM/JS boundary, the decoder should maintain an internal output buffer in WASM linear memory. The `push()` method returns a pointer (and length) to this buffer. The JavaScript side constructs a `Float32Array` *view* directly over the WASM memory buffer, avoiding a massive garbage-collection-inducing copy operation on every chunk.
 
+Important: The Float32Array view into WASM memory is valid for reading only. Do NOT transfer its underlying .buffer to the AudioWorklet via postMessage — doing so detaches WASM linear memory and crashes the decoder. Instead, use the buffer pool pattern described in player-component.md: create a view over the WASM output, copy into a pooled Float32Array, transfer the pooled buffer.
+
 ## Frame Decode Process
 
 For each frame in the loop:
@@ -72,10 +74,18 @@ For each frame in the loop:
 3.  **Subframe Decode:** Decode two verbatim subframes (Left, then Right).
     *   Read subframe header byte.
     *   Read `block_size` number of samples at `bps` bits each (e.g., 24 bits).
-    *   Sign-extend the 24-bit two's complement value to an `i32`.
+    *   Sign-extend the 24-bit two's complement value to an i32:
+        `let sample: i32 = (raw_24bit as i32) << 8 >> 8;`
+        where raw_24bit is the u32 formed by reading 24 bits from the BitReader. This arithmetic right shift propagates the sign bit correctly. Failure to sign-extend causes negative samples to appear as large positive values, producing severe distortion in the normalized f32 output.
 4.  **Byte Alignment:** Align the reader to a byte boundary after subframes.
 5.  **CRC-16:** Read the trailing CRC-16.
-6.  **Sufficiency Check:** *Crucially, before committing to a frame decode, the decoder must check if enough bytes exist in the buffer to complete the entire frame (header + samples + CRC).* If not, it breaks the loop and waits for the next `push()`.
+6.  **Sufficiency Check:** The frame size is only fully known after parsing the variable-length frame header (the UTF-8 frame number makes header length variable). The correct approach is a tentative parse with rollback:
+    1. Record start_offset = current read position.
+    2. Tentatively parse the frame header (sync, flags, UTF-8 frame number, literal block size, literal sample rate, CRC-8).
+    3. Calculate required_bytes = bytes_consumed_by_header + (block_size * channels * bps / 8) + 2 (CRC-16).
+    4. If buffer.len() - start_offset < required_bytes: reset read position to start_offset; break the decode loop.
+    5. Otherwise: proceed with subframe decode and CRC-16 verification.
+    This prevents partially decoded frames from corrupting the decoder state.
 
 ## BitReader Helper
 

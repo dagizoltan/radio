@@ -31,7 +31,9 @@ The device is opened with `O_RDWR | O_NONBLOCK`.
 
 **CRITICAL CONSTRAINT (Hardware Parameter Validation):** ALSA devices (especially USB interfaces) will sometimes silently reject specific hardware parameters and fall back to their nearest supported capability if the `ioctl` isn't checked rigorously. After calling `IOCTL_HW_PARAMS`, the capture task **must read back the active hardware parameters** from the `SndrPcmHwParams` struct and verify they exactly match the requested configuration (48000Hz, 2 channels, and the exact sample format like `S24_LE` or `S32_LE`). If they do not match, the process must log a fatal error and exit, rather than recording corrupted audio.
 
-**CRITICAL CONSTRAINT (Sign-Extension):** Because ALSA's `S24_LE` format stores 24-bit audio in the lower 3 bytes of a 32-bit word, the capture crate **must** sign-extend the 24th bit into the top 8 bits when converting to a standard Rust `i32`. Without sign-extension, negative audio samples will be interpreted as massive positive integers, resulting in extreme distortion when normalized to `f32` later in the pipeline.
+**CRITICAL CONSTRAINT (Sign-Extension):** Because ALSA's `S24_LE` format stores 24-bit audio in the lower 3 bytes of a 32-bit word, the capture crate must sign-extend the 24th bit into the top 8 bits using:
+`let sample: i32 = (raw_word as i32) << 8 >> 8;`
+where raw_word is the u32 read from the ALSA S24_LE buffer. The arithmetic right shift (>>) propagates the sign bit. Do not use logical right shift (>>>) or cast directly to i32 without shifting — negative audio samples would be read as large positive integers, producing extreme distortion when normalized to f32.
 
 ### #[repr(C)] Structs
 
