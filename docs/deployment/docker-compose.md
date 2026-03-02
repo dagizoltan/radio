@@ -64,12 +64,7 @@ The automated script applies the following CORS JSON rule using `mc anonymous se
 *   **Ports**: Exposes port `8080` (Monitor UI).
 *   **Device Passthrough**: Maps `/dev/snd` from the host to `/dev/snd` in the container.
 *   **Volumes**: Mounts `./recordings` as a volume to persist recordings on the host machine.
-*   **tmpfs**: Mounts a tmpfs at `/staging` for fast RAM-backed staging file writes: `tmpfs: ["/staging:size=256m,mode=1777"]`.
-*   **Audio Group GID Fix**: The entrypoint is a custom shell script that resolves permissions for the ALSA device.
-    1.  Reads the GID of `/dev/snd/controlC0` from the host.
-    2.  Adjusts the container's `audio` group to match the host GID.
-    3.  Adds the runtime user to the `audio` group.
-    4.  `exec`s the Rust binary.
+*   **Audio Device Passthrough & Group Mapping**: To allow the container to access the host's `/dev/snd` device, the `docker run` execution should pass `--device=/dev/snd` and utilize `--group-add audio` (or inject the specific GID as an environment variable or via Compose `group_add`) to align permissions smoothly, bypassing fragile runtime shell scripts inside the container's entrypoint.
 *   **Environment Variables**:
     *   `R2_ENDPOINT`: `http://minio:9000`
     *   `R2_BUCKET`: Pulled from `.env`
@@ -92,8 +87,6 @@ The automated script applies the following CORS JSON rule using `mc anonymous se
 ## Volumes
 
 *   `minio-data`: A persistent named volume for the S3-compatible backend.
-
-The `/staging` tmpfs is sized at 256 MB. At ~1.5 GB/hour the Recorder writes approximately 25 MB/minute. The Recorder Task must rotate the staging file to `./recordings/` every **8 minutes** (~200 MB per staging file), which fits within the 256 MB limit with ~25% headroom. Do not increase the rotation interval beyond 8 minutes without also increasing the tmpfs size proportionally.
 
 ## Environment Files
 

@@ -37,7 +37,7 @@ Handles direct hardware capture and local uncompressed archiving.
     *   Writes the frames directly to the archive file using `AsyncWriteExt::write_all`. Updates `recording_bytes`.
     *   Sends the raw PCM period as `Arc<Vec<i32>>` via a bounded `tokio::sync::mpsc` channel (capacity 16) to the Converter Task. The FLAC encoding above is written to the archive only — the Converter receives raw PCM directly and never sees the FLAC-encoded bytes.
     *   Emits VU levels to `sse_tx`.
-6.  **Archiving:** Periodically (every 8 hours, or on graceful shutdown), it flushes and closes the current archive file to prevent excessively large file sizes, and opens a new timestamped file to continue.
+6.  **Archiving:** Periodically (e.g., **every hour**, or on graceful shutdown), it flushes and closes the current archive file to prevent excessively large file sizes and to isolate failure blast radii. It opens a new timestamped file to continue. (An 8-hour continuous 24-bit/48kHz FLAC file is roughly 8.3 GB; keeping a file of this size open in memory or on disk for hours introduces substantial risk of data corruption if a power failure occurs.)
 
 ### Process 2: Converter Task
 
@@ -103,7 +103,7 @@ Receives completed segments and handles S3 uploads and manifest management.
     **Retry exhaustion:** If all retries are exhausted for a segment `PUT`:
     1. Log `ERROR: segment {index} upload failed after {n} retries — skipping`.
     2. Increment the `radio_segment_upload_exhaustion_total` Prometheus metric.
-    3. Discard the segment bytes from memory.
+    3. Discard the segment bytes from memory. **Note:** This permanently drops the 10-second segment from the live broadcast. The R2 cloud bucket is considered an ephemeral, best-effort live delivery mechanism. The continuous, gapless true lossless record is exclusively maintained by the local `recordings/` archive on the ThinkPad.
     4. Do **not** update the manifest. The `latest` index does not advance for the failed segment.
     5. Do **not** update the rolling window queue — the failed segment was never successfully stored on R2, so there is nothing to delete.
     6. Continue processing the next segment received from the Converter channel.

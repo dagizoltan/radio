@@ -81,8 +81,11 @@ async _acquireLock() {
   });
 
   this._showMessage("Stream is already playing in another tab.");
+  this._showTransferButton(); // Allow user to steal the lock
 }
 ```
+
+**UX Improvement (Lock Stealing):** Implement a mechanism to allow a new tab to gracefully "steal" playback. This prevents a user from being permanently blocked if a tab crashes or they intentionally open a new window. Use `BroadcastChannel` to ping the active tab; if it does not respond, or if the user clicks a "Transfer playback here" button, release the lock in the background tab and acquire it in the new one.
 
 **Fallback:** Check `"locks" in navigator` before using the API. On unsupported browsers, skip the lock and log a console warning. Multi-tab is then silently permitted on those browsers.
 
@@ -140,6 +143,7 @@ The core of the player is the fetch loop, which continuously polls for new segme
     HQ segments are FLAC (`.flac`). LQ segments are raw continuous Opus packets (`.opus`). Quality is differentiated by path prefix and file extension.
     *   **Robust Fetching:** Wrap the `fetch()` call with an `AbortController` timeout (e.g., 15 seconds) to prevent the promise from hanging indefinitely if the network silently drops.
     *   **404 Handling:** If the fetch returns a `404 Not Found` (which can happen if the client is lagging and the rolling window has deleted the segment, or if the server restarted and performed a startup sweep), abort the current segment fetch, sleep briefly, and immediately poll the manifest to resynchronize the `latest` index.
+    *   **403 Handling:** If the fetch returns a `403 Forbidden`, the injected security token has likely expired (e.g., the Deno SSR server restarted or the listener was offline during a "Tunnel Scenario" for longer than the token lifetime). The fetch loop must explicitly request a new token from the Deno server (e.g., via a `/api/token` endpoint) before retrying.
     *   Get a `ReadableStreamDefaultReader` from the response body.
     *   Loop `reader.read()`. As each `Uint8Array` chunk arrives:
         *   Pass the chunk to the WASM decoder: `const pcm = decoder.push(chunk)`.
@@ -150,6 +154,7 @@ The core of the player is the fetch loop, which continuously polls for new segme
         pcmCopy.set(pcm); // Copy out of WASM bounds into pooled buffer
         workletNode.port.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer buffer
         ```
+        *Future Optimization:* If the server is configured with Cross-Origin Isolation headers (`COOP`/`COEP`), the player can use `SharedArrayBuffer` for zero-allocation, lock-free audio piping. The WASM module and the AudioWorklet can point directly to the same shared memory region, completely eliminating `postMessage` transfers and preventing main-thread garbage collection entirely.
 5.  **Quality Switching:** If the user changes the quality mid-stream:
     *   The current `reader.cancel()` is called.
     *   A `"FLUSH"` message is sent to the `AudioWorklet` via `postMessage` to instantly clear any buffered PCM data. This prevents an audible pitch-shift or pop when the new codec chunks arrive.

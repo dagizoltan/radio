@@ -26,7 +26,11 @@ When a client makes a `GET /` request, the server executes the following sequenc
 
 **Manifest proxying and Edge Caching.** To avoid excessive Class B operation costs on R2 due to thousands of clients polling `manifest.json` every 10 seconds, the Deno server **must** proxy the `manifest.json` fetch and set a `Cache-Control: s-maxage=5` header. This coalesces thousands of client polls into a single R2 bucket read every few seconds.
 
-**Security Token Injection.** To prevent unauthorized scraping of the public R2 bucket, the S3/R2 bucket should be secured behind a Cloudflare Worker (or Cloudflare Access). The Deno SSR server generates a short-lived cryptographic token (e.g., HMAC signed timestamp) and injects it into the `radio-player` dataset (`data-token`). The player appends this token to segment fetch requests `?token=xyz`. The Cloudflare Worker validates the token before serving the R2 object.
+**Security Token Injection.** To prevent unauthorized scraping of the public R2 bucket while allowing direct segment fetches, the S3/R2 bucket should be secured behind a Cloudflare Worker (or Cloudflare Access) handling authentication.
+
+*Implementation Warning:* Do not bind an HMAC token directly to the client's IP address inside the SSR HTML (e.g., as `data-token="xyz"`). The IP address the Deno server sees might differ from the IP the Cloudflare Worker sees (due to proxies, VPNs, or IPv4/IPv6 dual-stack routing), causing valid edge requests to be blocked. Furthermore, generating IP-specific tokens defeats HTML-level edge caching at the SSR layer.
+
+*Recommended Approach:* Use a separate token-granting API endpoint on the Deno server (`/api/token`). The `<radio-player>` client script fetches a fresh, short-lived HMAC token immediately upon initialization (and refreshes it if it receives a `403 Forbidden` during playback) rather than relying on a baked-in HTML attribute. Alternatively, configure strict CORS and Origin/Referer checks at the Cloudflare WAF level as a baseline defense without token injection.
 
 ### Manifest Fetch Failure Handling (SSR)
 
