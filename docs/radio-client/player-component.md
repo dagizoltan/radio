@@ -142,7 +142,7 @@ The core of the player is the fetch loop, which continuously polls for new segme
     *   **Optimization:** Rely on the `Cache-Control: s-maxage=5` header set by the Deno server to utilize CDN edge caching.
     *   If offline, update the UI and retry after a delay.
     *   If live, extract `latest` segment index and `segment_s` duration.
-2.  **Buffering Strategy:** Start playing at currentIndex = Math.max(0, latest - 2) to handle the case where latest < 2 at stream startup.
+2.  **Buffering Strategy:** Start playing at `currentIndex = Math.max(0, latest - 2)` to handle the case where latest < 2 at stream startup. To support fluctuating network conditions (especially when downloading unconstrained VBR Opus segments), the client should dynamically track download bandwidth. If the bandwidth drops close to the required streaming rate, the player should dynamically expand its internal buffer target (e.g., buffering 3 or 4 segments ahead) rather than relying on a static 2-segment pre-roll.
 3.  **Jump-Ahead Logic:**
     *   If the player's current segment index is ahead of `latest`, sleep for `segment_s / 2` and repoll.
     *   If the player falls more than 3 segments behind `latest` (e.g., due to pausing or network stall), immediately jump to `latest - 1`.

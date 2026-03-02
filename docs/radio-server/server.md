@@ -86,15 +86,18 @@ On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values
 
 Receives completed segments and handles S3 uploads and manifest management.
 
-1.  **Startup Cleanup:** Before processing any new segments, performs a `LIST` and `DELETE` operation on the bucket prefixes (`live/hq/` and `live/lq/`) to remove any orphaned segments from a previous crashed session.
-    *   **Race Condition Mitigation:** Before issuing any `DELETE` requests during the startup sweep, write `manifest.json` with `"live": false`. This ensures any active listeners enter their backoff/retry state before their buffered segments are deleted. After the sweep completes and the first new segment is uploaded, the manifest is updated to `"live": true`. The recommended implementation sequence:
+1.  **Startup Synchronization & Cleanup:** To ensure the stream can resume immediately without being blocked by slow S3 `LIST` operations, the server should rely on local state persistence.
+    *   **Local State Persistence:** The Uploader Task should persist the `r2_segment` index to a small local file (e.g., `./recordings/state.json`) after each successful upload. On startup, the server reads this file to instantly know the last used index.
+    *   **Resuming Broadcast:** The Uploader Task can immediately resume uploading new segments starting from `(last_persisted_index + 1) % 100_000_000`. It does not need to wait for a full S3 `LIST` operation.
+    *   **Background Cleanup Sweep:** A background task (spawned independently) can then perform a slow `LIST` on the `live/hq/` and `live/lq/` prefixes to find any orphaned segments from a previous crashed session (segments older than the rolling window) and issue `DELETE` requests.
+    *   **If local state is lost:** If `state.json` is missing or corrupted, the system falls back to a synchronous S3 `LIST` operation before starting:
         1. LIST `live/hq/` and `live/lq/` to find all existing segment keys and the highest existing index.
-        2. Write `manifest.json` with `"live": false` and `latest` set to the highest found index (or `0` if none found). Example: `{"live": false, "latest": 99, "segment_s": 10, "updated_at": <now>}`. Using the previously-known index prevents active clients from hard-resetting to segment 0 when they read the offline manifest.
+        2. Write `manifest.json` with `"live": false` and `latest` set to the highest found index (or `0` if none found). Example: `{"live": false, "latest": 99, "segment_s": 10.24, "updated_at": <now>}`. Using the previously-known index prevents active clients from hard-resetting to segment 0 when they read the offline manifest.
         3. DELETE all found segment keys.
         4. Resume uploading from `(highest_found_index + 1) % 100_000_000` (or `0` if none found).
         5. After the first successful segment upload: write `manifest.json` with `"live": true` and the new `latest` index.
 
-> **Why LIST before writing the offline manifest:** Writing `"latest": 0` in the offline manifest causes all connected clients to reset their `currentIndex` to 0. When `live: true` is published with the real index (e.g., 1,042), every client triggers the jump-ahead logic and makes a burst of manifest polls simultaneously. Using the last known index avoids this thundering-herd effect on reconnect.
+> **Why write the offline manifest with the last known index:** Writing `"latest": 0` in the offline manifest causes all connected clients to reset their `currentIndex` to 0. When `live: true` is published with the real index (e.g., 1,042), every client triggers the jump-ahead logic and makes a burst of manifest polls simultaneously. Using the last known index avoids this thundering-herd effect on reconnect.
 
 2.  Receives completed HQ and LQ segment files from the Converter Task via a bounded `tokio::sync::mpsc` channel (capacity 3). The Uploader is the sole receiver. If the channel is full due to upload back-pressure, the Converter's send returns an error and logs `WARN: uploader lagging`.
 3.  Loops, receiving assembled segment files.
@@ -127,7 +130,7 @@ Receives completed segments and handles S3 uploads and manifest management.
 
 5.  **Rolling Window:** Maintains a queue of uploaded S3 keys for all qualities. If the window exceeds 10 segments per quality, it issues `DELETE` requests for the oldest objects. A 10-segment window is strictly required to prevent intermittent 404 errors for clients recovering from lag or fetching immediately after a manifest update.
 
-The rolling window VecDeque is held only in RAM and is not persisted to disk. If the server crashes ungracefully (SIGKILL, power loss), the VecDeque is lost. The startup cleanup sweep (Step 1 of Cloud Uploader startup) is the designated recovery mechanism: it re-discovers existing segments via LIST and deletes all of them, resetting to a clean state. This means a crash may leave up to 10 orphaned segments on R2 until the next startup sweep, which is acceptable given the S3 lifecycle rule backup.
+The rolling window VecDeque is held only in RAM and is not persisted to disk. If the server crashes ungracefully (SIGKILL, power loss), the VecDeque is lost. The background cleanup sweep (Step 1 of Cloud Uploader startup) acts as the recovery mechanism: it re-discovers existing segments via `LIST` and deletes older orphaned segments. This means a crash may leave up to 10 orphaned segments on R2 until the next background cleanup sweep, which is acceptable given the S3 lifecycle rule backup.
 6.  Pushes the new HQ segment (the raw bytes, WITHOUT the stream header) into `local_segments` (keeping only the last 3) for the local operator monitor playback. The HTTP Task prepends the stream header from `AppState.flac_header` when serving `/local/:id`.
 7.  Updates `r2_segment`, `r2_last_ms`, and `r2_uploading`. Emits `r2` status events to `sse_tx` during and after the upload.
 
