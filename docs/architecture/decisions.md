@@ -110,8 +110,8 @@ The S3 Uploader explicitly sets `Cache-Control` headers when pushing to Cloudfla
 
 ## R2 Bucket Security (Token Injection)
 
-*   **Rationale:** If the R2 bucket is public, anyone can write a script to continuously fetch `segment-00000042.flac`, bypassing the frontend and racking up massive Class B operation costs.
-*   **Constraint:** The R2 bucket must be secured behind a Cloudflare Worker (or Cloudflare Access). The Deno SSR server must generate a short-lived cryptographic HMAC token (e.g., signed timestamp) and inject it into the `<radio-player>` via the `data-token` attribute. The player appends this token to all segment fetch requests (`?token=xyz`). The Cloudflare Worker validates this token before serving the segment, preventing unauthorized scraping.
+*   **Rationale:** If the R2 bucket is public, anyone can write a script to continuously fetch `segment-00000042.flac`, bypassing the frontend and racking up massive Class B operation costs (at $0.36 per million GETs, a simple loop could become expensive quickly).
+*   **Constraint (Client Fingerprinting):** The R2 bucket must be secured behind a Cloudflare Worker (or Cloudflare Access). The Deno SSR server must generate a short-lived cryptographic HMAC token and inject it into the `<radio-player>` via the `data-token` attribute. Crucially, this HMAC token **must incorporate the client's IP address (or a short-lived session ID)** along with a server secret. This prevents distributed botnets from extracting a single valid token from the HTML and sharing it to spam the bucket. The player appends this token to all segment fetch requests (`?token=xyz`), and the Cloudflare Worker validates both the signature and the client IP before serving the segment, preventing unauthorized scraping and egress abuse.
 
 ## Clock Drift and Buffer Management
 

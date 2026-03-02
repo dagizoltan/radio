@@ -22,7 +22,7 @@ The `decoder/opus/` crate exposes an `OpusDecoder` class for the LQ gapless cont
 The API is identical to `FlacDecoder.push()`: `push(bytes: &[u8]) -> Vec<f32>`.
 
 1.  **Binary Format Accumulation:** The LQ stream abandons the Ogg container to achieve gapless continuous streaming. Instead, the raw incoming bytes are accumulated in an internal `Vec<u8>` buffer.
-2.  **Length Prefix Parsing:** The decoder reads a 2-byte Big Endian integer `u16` from the front of the accumulator, representing the length of the following raw Opus packet payload.
+2.  **Length Prefix Parsing:** The decoder reads a 2-byte Big Endian integer `u16` from the front of the accumulator, representing the length of the following raw Opus packet payload. **Crucial Safety Check:** Before attempting to read this 2-byte prefix, the decoder must ensure `accumulator.len() >= 2`. A network chunk boundary might split the 2-byte prefix, leaving only 1 byte in the accumulator on a `push()`. Attempting to read a `u16` from a 1-byte slice will panic the WASM module and crash the web worker.
 3.  **Decode Loop:** It extracts the payload of the specified length and passes it to `OpusDecoder::decode_float()`, producing interleaved `f32` PCM at 48000 Hz. If the accumulator does not hold enough bytes for the complete payload length, it aborts the loop and waits for the next chunk via `push()`.
 4.  **No Pre-skip:** Because the stream is continuous and does not use Ogg page boundaries, the Opus decoder maintains its state seamlessly across 10-second HTTP segment boundaries. There is no `pre_skip` to discard, completely eliminating the 6.5ms gap present in the older Ogg implementation.
 5.  **Return:** Decoded `f32` samples are returned in the same format as `FlacDecoder`: interleaved stereo, range `[-1.0, 1.0]`, ready for the AudioWorklet ring buffer.
@@ -52,7 +52,7 @@ The core JavaScript API is `push(bytes: &[u8]) -> Vec<f32>`.
     *   It extracts sample rate (20 bits), channels (3 bits + 1), and bits per sample (5 bits + 1) using specific bit offsets from the packed metadata block.
     *   If successful, `header_parsed = true`.
 3.  **Frame Decode Loop:** Once the header is parsed, it enters a loop attempting to decode as many full frames as possible from the buffer.
-4.  **Consumption:** Processed bytes are removed from the front of the internal buffer. Unprocessed bytes (a partial frame at the end of a chunk) remain in the buffer for the next `push()` call.
+4.  **Consumption:** Processed bytes are removed from the front of the internal buffer. Unprocessed bytes (a partial frame at the end of a chunk) remain in the buffer for the next `push()` call. **Performance Critical:** Do not use `Vec::drain(..)` or `Vec::remove(0)` to remove processed bytes in a loop, as this causes `O(N^2)` memory shifting inside the WASM linear memory and can cause playback stutters on lower-end devices. Instead, track a read offset integer during the decode loop, and only use `Vec::drain(..offset)` or `slice::copy_within` once per `push()` call to move the unprocessed remainder to the front.
 5.  **Return (Zero-Copy Optimization):** Instead of allocating a new `Vec<f32>` and copying it across the WASM/JS boundary, the decoder should maintain an internal output buffer in WASM linear memory. The `push()` method returns a pointer (and length) to this buffer. The JavaScript side constructs a `Float32Array` *view* directly over the WASM memory buffer, avoiding a massive garbage-collection-inducing copy operation on every chunk.
 
 ## Frame Decode Process

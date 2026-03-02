@@ -42,6 +42,17 @@ The `process(inputs, outputs, parameters)` method is called by the Web Audio API
 4.  **Queue Management:** As samples are read, the `readPointer` advances and `samplesAvailable` decreases. This zero-allocation method guarantees the GC is never provoked on the audio thread.
 5.  **Keep Alive:** Returns `true` to ensure the worklet continues to be called.
 
+## Hardware Clock Drift Handling
+
+The Behringer UMC404HD ADC captures audio at exactly 48,000 Hz according to *its* internal quartz clock. The listener's laptop or smartphone DAC plays audio at 48,000 Hz according to *its* hardware clock. These two clocks will never match perfectly. Over several hours of continuous playback, this difference accumulates, causing the AudioWorklet ring buffer to either slowly empty (if the listener's clock is faster) or slowly fill up (if the listener's clock is slower).
+
+**The design specifically relies on the overflow/underrun protections as the intended, self-healing mechanism for clock drift.**
+
+*   **Underrun (Listener clock faster):** The ring buffer will eventually drain completely. The `process` method naturally outputs exactly one block (128 frames / ~2.6ms) of silence and waits for the next chunk to arrive. This produces a microscopic, barely perceptible gap in the audio that resynchronizes the clocks.
+*   **Overflow (Listener clock slower):** The ring buffer will eventually fill up. The overflow protection in `port.onmessage` drops exactly one incoming chunk of data. This causes a tiny, barely perceptible skip forward in the audio that resynchronizes the clocks.
+
+Do not attempt to implement complex, CPU-heavy dynamic resampling algorithms (like windowed sinc interpolation) in the WASM decoder or AudioWorklet to stretch/squeeze the audio to match the drift. The brutalist drop/silence-insertion approach is computationally free, prevents memory leaks, and provides a perfectly acceptable listening experience for a live vinyl broadcast.
+
 ## Critical Constraints
 
 **CRITICAL CONSTRAINT:** The browser audio player must use `AudioWorkletNode` for audio output, not `ScriptProcessorNode` (deprecated) or direct buffer scheduling. The worklet runs on a dedicated thread separate from the main JS thread.

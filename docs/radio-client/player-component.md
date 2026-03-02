@@ -127,6 +127,7 @@ The core of the player is the fetch loop, which continuously polls for new segme
 3.  **Jump-Ahead Logic:**
     *   If the player's current segment index is ahead of `latest`, sleep for `segment_s / 2` and repoll.
     *   If the player falls more than 3 segments behind `latest` (e.g., due to pausing or network stall), immediately jump to `latest - 1`.
+    *   **Server Restart Detection:** If the `latest` index abruptly drops by a large amount or resets to `0` (and it is not a normal rollover from 99,999,999), this indicates the backend server restarted. The continuous Opus stream state has been broken. In this case, call `decoder.reset()` before fetching the new segment to avoid decoding errors or audio glitches.
 4.  **Segment Streaming (Direct to CDN):**
     *   Construct the correct URL path using the `R2_PUBLIC_URL` base injected by the server.
     *   Construct the segment URL based on quality and append the security token if present:
@@ -137,22 +138,27 @@ The core of the player is the fetch loop, which continuously polls for new segme
     if (this.dataset.token) url += `?token=${this.dataset.token}`;
     ```
     HQ segments are FLAC (`.flac`). LQ segments are raw continuous Opus packets (`.opus`). Quality is differentiated by path prefix and file extension.
+    *   **Robust Fetching:** Wrap the `fetch()` call with an `AbortController` timeout (e.g., 15 seconds) to prevent the promise from hanging indefinitely if the network silently drops.
+    *   **404 Handling:** If the fetch returns a `404 Not Found` (which can happen if the client is lagging and the rolling window has deleted the segment, or if the server restarted and performed a startup sweep), abort the current segment fetch, sleep briefly, and immediately poll the manifest to resynchronize the `latest` index.
     *   Get a `ReadableStreamDefaultReader` from the response body.
     *   Loop `reader.read()`. As each `Uint8Array` chunk arrives:
         *   Pass the chunk to the WASM decoder: `const pcm = decoder.push(chunk)`.
-        *   If `pcm` (a `Float32Array`) has length > 0, transfer it to the worklet to avoid main-thread garbage collection. **CRITICAL:** Do NOT transfer `pcm.buffer` directly, as it points to the WASM instance's linear memory. Transferring it detaches the memory buffer, instantly crashing the WASM decoder. Instead, create a copy and transfer the copy's buffer:
+        *   If `pcm` (a `Float32Array`) has length > 0, transfer it to the worklet to avoid main-thread garbage collection. **CRITICAL:** Do NOT transfer `pcm.buffer` directly, as it points to the WASM instance's linear memory. Transferring it detaches the memory buffer, instantly crashing the WASM decoder. Instead, you **must** implement a buffer pool to copy the data into and transfer to the worklet. Creating a `new Float32Array(pcm)` on every chunk will eventually trigger main-thread garbage collection pauses. Use a `MessageChannel` (or simply `port.onmessage`) where the Worklet returns empty buffers for the decoder to reuse, achieving true zero-allocation playback:
         ```javascript
-        const pcmCopy = new Float32Array(pcm); // Copy out of WASM bounds
-        workletNode.port.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer buffer (zero-allocation for postMessage)
+        // Assume `pool` is an array of recycled Float32Arrays
+        const pcmCopy = pool.pop() || new Float32Array(pcm.length);
+        pcmCopy.set(pcm); // Copy out of WASM bounds into pooled buffer
+        workletNode.port.postMessage(pcmCopy, [pcmCopy.buffer]); // Transfer buffer
         ```
-        *(Optional optimization: To achieve true zero-allocation playback, implement a buffer pool using a `MessageChannel` where the Worklet returns empty buffers for the decoder to reuse).*
 5.  **Quality Switching:** If the user changes the quality mid-stream:
     *   The current `reader.cancel()` is called.
     *   A `"FLUSH"` message is sent to the `AudioWorklet` via `postMessage` to instantly clear any buffered PCM data. This prevents an audible pitch-shift or pop when the new codec chunks arrive.
     *   The `currentQuality` state updates.
     *   The fetch loop immediately attempts to fetch the *next* `currentIndex` (`currentIndex + 1`) using the new quality path (`hq` FLAC or `lq` Opus).
     **Audio forward skip on quality switch:** Because the fetch loop fetches the *next* `currentIndex` from byte 0 in the new codec, the listener may experience a slight forward skip (up to 10 seconds of audio) after a quality switch (the portion of the current segment skipped). This produces a clean decode boundary with no codec state bleed and provides a better user experience than re-playing up to 10 seconds of already-heard audio.
-6.  **Iteration:** When `reader.read()` returns `done: true` normally, increment the `currentIndex`.
+6.  **Iteration:** When `reader.read()` returns `done: true` normally, increment the `currentIndex`. **CRITICAL Codec Boundary:**
+    *   If `currentQuality === 'hq'`, you **must** call `decoder.reset()` before fetching the next segment. Every HQ segment is a standalone FLAC file starting with a `fLaC` stream header; `reset()` tells the WASM decoder to expect and parse this header instead of treating it as garbage frame data.
+    *   If `currentQuality === 'lq'`, you **must not** call `decoder.reset()`. The Opus stream is raw and continuous across segments; resetting the decoder would break the stream state.
 7.  **Latency Display:** Calculate and update the UI with the estimated latency: `(latest - currentIndex) * segment_s` seconds behind live.
 ## AudioContext Lifecycle and Background Tab Handling
 

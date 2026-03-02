@@ -4,12 +4,13 @@ The `crates/capture` library is responsible for reading digital audio directly f
 
 ## ALSA Device Discovery
 
-The capture device is a Behringer UMC404HD. The crate locates the correct ALSA PCM device file dynamically at runtime.
+The capture device is typically a Behringer UMC404HD, but the crate locates the correct ALSA PCM device file dynamically at runtime based on an environment variable for portability.
 
-1.  It parses `/proc/asound/cards`.
-2.  It matches the string `"UMC404"`.
-3.  It extracts the card number (e.g., `C1`).
-4.  It constructs the device path: `/dev/snd/pcmC{N}D0c`, where `{N}` is the card number.
+1.  It reads the `CAPTURE_DEVICE_NAME` environment variable (e.g., `"UMC404"`). If not set, it may default to a sensible value or error out.
+2.  It parses `/proc/asound/cards`.
+3.  It matches the string provided by `CAPTURE_DEVICE_NAME`.
+4.  It extracts the card number (e.g., `C1`).
+5.  It constructs the device path: `/dev/snd/pcmC{N}D0c`, where `{N}` is the card number.
 
 ## Raw ioctl Interface
 
@@ -27,6 +28,10 @@ The device is opened with `O_RDWR | O_NONBLOCK`.
 *   **Buffer Size:** 4 periods
 
 *(Note: The `S24_LE` ALSA format uses 32-bit words (4 bytes per sample), where the audio data occupies the lower 24 bits and the top 8 bits are zero-padded. The hardware may natively expose `S32_LE` or `S24_3LE` (tightly packed 3 bytes). The implementer must log and check the supported formats and ensure the 24 bits are correctly extracted and packed tightly (3 bytes per sample) before verbatim FLAC encoding.)*
+
+**CRITICAL CONSTRAINT (Hardware Parameter Validation):** ALSA devices (especially USB interfaces) will sometimes silently reject specific hardware parameters and fall back to their nearest supported capability if the `ioctl` isn't checked rigorously. After calling `IOCTL_HW_PARAMS`, the capture task **must read back the active hardware parameters** from the `SndrPcmHwParams` struct and verify they exactly match the requested configuration (48000Hz, 2 channels, and the exact sample format like `S24_LE` or `S32_LE`). If they do not match, the process must log a fatal error and exit, rather than recording corrupted audio.
+
+**CRITICAL CONSTRAINT (Sign-Extension):** Because ALSA's `S24_LE` format stores 24-bit audio in the lower 3 bytes of a 32-bit word, the capture crate **must** sign-extend the 24th bit into the top 8 bits when converting to a standard Rust `i32`. Without sign-extension, negative audio samples will be interpreted as massive positive integers, resulting in extreme distortion when normalized to `f32` later in the pipeline.
 
 ### #[repr(C)] Structs
 
@@ -70,6 +75,6 @@ An ALSA buffer overrun (xrun) occurs when the kernel fills the capture buffer fa
 
 **CRITICAL CONSTRAINT:** No C bindings in capture. The capture crate must not link against `libasound` or any C audio library. All ALSA interaction is via raw kernel ioctls through `rustix`.
 
-**CRITICAL CONSTRAINT:** ALSA device discovery is dynamic. The card number for the UMC404HD is found at runtime by parsing `/proc/asound/cards`. Do not hardcode card numbers.
+**CRITICAL CONSTRAINT:** ALSA device discovery is dynamic. The card number is found at runtime by parsing `/proc/asound/cards` and matching against the `CAPTURE_DEVICE_NAME` environment variable. Do not hardcode device names or card numbers.
 
 **CRITICAL CONSTRAINT:** Tokio AsyncFd for capture, not threads. The audio capture must use `AsyncFd` so the Tokio runtime controls wakeup. Do not spawn a dedicated OS thread for capture or use `spawn_blocking` with a polling loop.

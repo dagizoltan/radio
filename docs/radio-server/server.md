@@ -56,12 +56,11 @@ opus_staging: Vec<i32>  // interleaved stereo, pre-allocated with capacity 960 *
 
 On each received ALSA period (4096 interleaved stereo frames = 8192 `i32` values):
 1. Append all samples from the received `Arc<Vec<i32>>` into `opus_staging`.
-2. While `opus_staging.len() >= 1920` (960 frames × 2 channels):
-   - Drain the first 1920 samples from `opus_staging`.
-   - Convert the drained `i32` samples to `f32` (divide by `8388608.0` for 24-bit).
-   - Pass the 1920-sample `f32` slice to `opus_encoder.encode_float()`.
+2. Process frames in chunks of 1920 samples (960 frames × 2 channels). **Performance Critical:** Do not use `Vec::drain(..1920)` in a `while` loop, as this causes an `O(N^2)` memory shift inside the hot-path. Instead, iterate over `opus_staging.chunks_exact(1920)`:
+   - Convert the 1920-sample chunk from `i32` to `f32` (divide by `8388608.0` for 24-bit).
+   - Pass the `f32` slice to `opus_encoder.encode_float()`.
    - Accumulate the resulting Opus packet into the current segment's Ogg writer.
-3. Leftover samples (at most 1919) remain in `opus_staging` for the next period.
+3. After the loop, extract the `chunks_exact.remainder()`. Overwrite the start of `opus_staging` with the remainder and truncate the vector to the remainder's length. This performs exactly one memory shift per ALSA period.
 
 **Frame size constraint:** The Opus encoder must be initialized with a frame size of `960` samples. Do not use other valid Opus frame sizes (480, 2880, etc.) — 960 (20ms at 48kHz) is the standard and produces the best quality/latency balance for this use case.
 
@@ -97,8 +96,9 @@ Receives completed segments and handles S3 uploads and manifest management.
     *   Uploads the segments to S3 using raw HTTP with [AWS Signature V4](aws-sig-v4.md).
     *   **Resilience:** Uses an exponential backoff retry loop (e.g., 3-5 retries) for the HTTP PUT requests to handle transient network drops. To prevent unbounded channel stalls from backing up the pipeline, the `reqwest` client must be configured with aggressive timeouts (e.g., a `connect_timeout` of 2s and a total `timeout` of 8s). If the HTTP request hits the timeout, it counts as a failure towards the retry limit. Once exhausted, the segment is aggressively dropped, unblocking the channel so the Recorder task is not impacted.
     *   Key format uses quality folders: e.g., `live/hq/segment-{:08}.flac` and `live/lq/segment-{:08}.opus`.
+    *   **Immutable Audio Caching:** The `PUT` request for the actual audio segment files (`.flac` and `.opus`) **must** include the `Cache-Control: public, max-age=31536000, immutable` header. Because segments are monotonically numbered and never modified after creation, aggressive caching prevents unnecessary Class B GETs from the origin if multiple users hit the same edge node.
     *   Writes `live/manifest.json` containing metadata for both streams: `{"live": true, "latest": index, "segment_s": 10, "updated_at": timestamp, "qualities": ["hq", "lq"]}`.
-    *   **Crucial Caching Instruction:** The `PUT` request for `manifest.json` **must** include the `Cache-Control: no-store, max-age=0` metadata explicitly. Although `no-cache` would allow ETag-based revalidation, clients implement ETag tracking manually in JavaScript memory and fetch directly from R2. `no-store` is used to ensure no intermediate CDN layer retains any copy of the manifest.
+    *   **Crucial Manifest Caching Instruction:** The `PUT` request for `manifest.json` **must** include the `Cache-Control: no-store, max-age=0` metadata explicitly. Although `no-cache` would allow ETag-based revalidation, clients implement ETag tracking manually in JavaScript memory and fetch directly from R2. `no-store` is used to ensure no intermediate CDN layer retains any copy of the manifest.
 
     **Retry exhaustion:** If all retries are exhausted for a segment `PUT`:
     1. Log `ERROR: segment {index} upload failed after {n} retries — skipping`.

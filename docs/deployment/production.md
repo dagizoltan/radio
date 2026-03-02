@@ -39,8 +39,8 @@ chronyc tracking
 4.  Navigate to **Settings** for the bucket.
 5.  Enable **Public Access** (either via an R2.dev subdomain or by binding a custom domain). Note this URL as the `R2_PUBLIC_URL` for the client.
 6.  **Secure the Bucket:** Do not make the bucket natively public to avoid scraping. Instead, create a Cloudflare Worker that acts as a secure proxy for the bucket, validating HMAC tokens appended by the client (`?token=xyz`). The Deno SSR server generates these tokens. See [Architecture Decisions](../architecture/decisions.md) for details on the security token injection strategy.
-7.  **Configure CORS Policy:** In the Cloudflare Worker handling the bucket requests, ensure it returns appropriate CORS headers (`Access-Control-Allow-Origin: https://your-project.deno.dev`) to allow the browser client to fetch the segments directly.
-7.  Navigate to **R2 API Tokens** and create a new token.
+7.  **Configure CORS Policy (CRITICAL):** Because the browser client fetches audio segments *directly* from the R2 bucket (bypassing the Deno proxy), the bucket or its worker proxy **must** have a CORS policy configured. The policy must allow `GET` and `HEAD` requests from your Deno frontend's origin (e.g., `https://your-project.deno.dev`). If using a Cloudflare Worker proxy, ensure it returns `Access-Control-Allow-Origin: https://your-project.deno.dev`. If exposing the bucket directly via an R2.dev domain, configure the CORS rules in the R2 dashboard settings. Without this, the browser will block the segment downloads.
+8.  Navigate to **R2 API Tokens** and create a new token.
     *   Permissions: **Object Read & Write**.
     *   Specific Bucket: Select your new bucket.
 8.  Copy the **Access Key ID**, **Secret Access Key**, and the **S3 API URL** (the endpoint URL).
