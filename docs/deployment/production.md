@@ -82,16 +82,16 @@ Once deployed, users can visit the Deno Deploy URL to listen to the live stream.
 
 The ThinkPad has a real-world upload bandwidth of approximately **10.68 Mbps**.
 
-- **HQ Segment Size:** 10s × 48000 Hz × 3 bytes × 2 channels = **2,880,000 bytes (~2.88 MB)**
-- **LQ Segment Size:** Opus VBR at 128 kbps target × 10s = **~100–220 KB** (average ~160 KB). For worst-case upload bandwidth planning, use the upper bound of **~220 KB** per segment. See the CDN Edge Caching section of [Design Decisions](../architecture/decisions.md) for rationale.
-- **Required Upload Speed (both streams, worst case):** `((2.88 + 0.22) × 8) / 10 ≈ 2.48 Mbps` continuous. At average LQ size (160 KB): `((2.88 + 0.16) × 8) / 10 ≈ 2.43 Mbps`.
+- **HQ Segment Size:** 10.24s × 48000 Hz × 3 bytes × 2 channels = **2,949,120 bytes (~2.95 MB)**
+- **LQ Segment Size:** Opus VBR at 128 kbps target × 10.24s = **~102–225 KB** (average ~164 KB). For worst-case upload bandwidth planning, use the upper bound of **~225 KB** per segment. See the CDN Edge Caching section of [Design Decisions](../architecture/decisions.md) for rationale.
+- **Required Upload Speed (both streams, worst case):** `((2.95 + 0.225) × 8) / 10.24 ≈ 2.48 Mbps` continuous. At average LQ size (164 KB): `((2.95 + 0.164) × 8) / 10.24 ≈ 2.43 Mbps`.
 - **Headroom:** The 10.68 Mbps connection provides comfortable headroom.
 
 ### Storage Estimation
 
 The system maintains a rolling window of exactly 10 segments per quality stream on R2 at any given time.
 
-- **HQ segments:** 10 × ~2.88 MB = **~28.8 MB**
+- **HQ segments:** 10 × ~2.95 MB = **~29.5 MB**
 - **LQ segments:** 10 × ~160 KB (average, VBR range 100–220 KB) = **~1.6 MB average**
 - **Manifest:** negligible (~200 bytes)
 - **Total steady-state: ~30.4 MB**

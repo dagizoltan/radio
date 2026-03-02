@@ -155,7 +155,7 @@ The client must automatically handle degraded network conditions without manual 
 ## Why Web Locks API for multi-tab prevention?
 
 - **Rationale:** Opening the stream in two browser tabs simultaneously doubles R2 egress from a single user, doubles WASM decoder CPU load, and can produce audio bleed between tabs on shared audio devices. The Web Locks API (`navigator.locks.request`) provides a browser-native, cross-tab mutex. If the lock cannot be acquired (another tab holds it), the player shows a "Stream is already playing in another tab" message and disables the play button rather than starting a second decoder pipeline.
-- **Fallback:** On browsers without Web Locks support (pre-Chromium Edge, some older Safari versions), the lock check is skipped and multi-tab is permitted silently. The player logs a console warning.
+- **Fallback:** On browsers without native Web Locks support (pre-Chromium Edge, some older Safari versions), the player must not fail open. It should implement a robust `localStorage` mutex fallback involving setting a timestamp heartbeat and listening to `storage` events. Gracefully degrading to disable playback entirely is preferable to silently allowing doubled CDN ingress and heavy WASM processing on legacy browsers.
 - **Constraint:** The lock name is `"radio-player-singleton"` and is held for the lifetime of the playback session. It is released automatically by the browser when the tab is closed or navigated away.
 
 ## Why explicit AudioContext resume on tab visibility change?
