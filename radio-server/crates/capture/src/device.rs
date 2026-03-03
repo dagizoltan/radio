@@ -1,11 +1,11 @@
 use crate::alsa_sys::*;
-use libc::{ioctl, O_NONBLOCK, O_RDWR};
+use libc::{ioctl, O_NONBLOCK};
 use std::fs::OpenOptions;
 use std::os::unix::io::{AsRawFd, RawFd};
 
 pub struct Device {
     fd: RawFd,
-    file: std::fs::File,
+    _file: std::fs::File,
 }
 
 impl Device {
@@ -31,8 +31,8 @@ impl Device {
         // Wait, mask array maps 0=ACCESS, 1=FORMAT, 2=SUBFORMAT.
         // The ALSA param index for ACCESS is 0, FORMAT is 1, SUBFORMAT is 2.
 
-        let mask_idx_access = SNDRV_PCM_HW_PARAM_ACCESS;
-        let mask_idx_format = SNDRV_PCM_HW_PARAM_FORMAT;
+        let _mask_idx_access = SNDRV_PCM_HW_PARAM_ACCESS;
+        let _mask_idx_format = SNDRV_PCM_HW_PARAM_FORMAT;
 
         hw_params.masks[0] = 1 << SNDRV_PCM_ACCESS_RW_INTERLEAVED;
         // 0 -> Access. masks[0] represents the mask for ACCESS. The bit to set is SNDRV_PCM_ACCESS_RW_INTERLEAVED (3) -> 1<<3.
@@ -69,7 +69,7 @@ impl Device {
             panic!("Device fallback: does not support 48000 Hz");
         }
 
-        Device { fd, file }
+        Device { fd, _file: file }
     }
 
     pub fn prepare(&self) {

@@ -118,7 +118,7 @@ impl FlacEncoder {
         bw.into_bytes()
     }
 
-    fn encode_utf8_flac(mut val: u64) -> Vec<u8> {
+    fn encode_utf8_flac(val: u64) -> Vec<u8> {
         if val < 0x80 {
             vec![val as u8]
         } else if val < 0x800 {
@@ -159,18 +159,17 @@ impl FlacEncoder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::crc::{Crc8, Crc16};
 
     #[test]
     fn test_flac_crc_vectors() {
         // We will just verify the CRC8 and CRC16 logic on a known buffer
         let crc8 = Crc8::new();
         let crc16 = Crc16::new();
-        let data: [u8; 4] = [0x12, 0x34, 0x56, 0x78];
-        let c8 = crc8.calculate(&data);
-        let c16 = crc16.calculate(&data);
-        // We just ensure it runs
-        assert_eq!(c8, 28);
-        assert_eq!(c16, 7811);
+        let data = b"123456789";
+        let c8 = crc8.calculate(data);
+        let c16 = crc16.calculate(data);
+        assert_eq!(c8, 0xF4);
+        assert_eq!(c16, 0xFEE8);
     }
 }
