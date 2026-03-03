@@ -57,5 +57,11 @@ pub fn discover_device() -> (String, u32) {
         }
     }
 
+    // Ultimate fallback for environments without real ALSA devices (e.g., Docker/macOS mock)
+    if devices.is_empty() || env::var("AUDIO_DEVICE").unwrap_or_default() == "mock_device" {
+        println!("No ALSA devices found or mock requested. Falling back to mock_device.");
+        return ("mock_device".to_string(), 2);
+    }
+
     panic!("Device {} not found. Available devices: {:?}", target_device_name, devices);
 }
