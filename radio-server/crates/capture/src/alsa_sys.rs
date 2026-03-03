@@ -9,12 +9,24 @@ pub struct SndInterval {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+pub struct SndMask {
+    pub bits: [u32; 8],
+}
+
+impl Default for SndMask {
+    fn default() -> Self {
+        SndMask { bits: [0; 8] }
+    }
+}
+
+#[repr(C)]
+#[derive(Debug, Clone, Copy)]
 pub struct SndrPcmHwParams {
     pub flags: u32,
-    pub masks: [u32; 16],
-    pub mres: [u32; 20],
+    pub masks: [SndMask; 3],
+    pub mres: [SndMask; 5],
     pub intervals: [SndInterval; 12],
-    pub ires: [u32; 36],
+    pub ires: [SndInterval; 9],
     pub rmask: u32,
     pub cmask: u32,
     pub info: u32,
@@ -29,10 +41,10 @@ impl Default for SndrPcmHwParams {
     fn default() -> Self {
         SndrPcmHwParams {
             flags: 0,
-            masks: [0; 16],
-            mres: [0; 20],
+            masks: [SndMask::default(); 3],
+            mres: [SndMask::default(); 5],
             intervals: [SndInterval::default(); 12],
-            ires: [0; 36],
+            ires: [SndInterval::default(); 9],
             rmask: 0,
             cmask: 0,
             info: 0,
@@ -64,18 +76,18 @@ pub const SNDRV_PCM_HW_PARAM_FORMAT: usize = 1;
 pub const SNDRV_PCM_HW_PARAM_SUBFORMAT: usize = 2;
 
 // Interval constants
-pub const SNDRV_PCM_HW_PARAM_SAMPLE_BITS: usize = 7;
-pub const SNDRV_PCM_HW_PARAM_FRAME_BITS: usize = 8;
-pub const SNDRV_PCM_HW_PARAM_CHANNELS: usize = 9;
-pub const SNDRV_PCM_HW_PARAM_RATE: usize = 10;
-pub const SNDRV_PCM_HW_PARAM_PERIOD_TIME: usize = 11;
-pub const SNDRV_PCM_HW_PARAM_PERIOD_SIZE: usize = 12;
-pub const SNDRV_PCM_HW_PARAM_PERIOD_BYTES: usize = 13;
-pub const SNDRV_PCM_HW_PARAM_PERIODS: usize = 14;
-pub const SNDRV_PCM_HW_PARAM_BUFFER_TIME: usize = 15;
-pub const SNDRV_PCM_HW_PARAM_BUFFER_SIZE: usize = 16;
-pub const SNDRV_PCM_HW_PARAM_BUFFER_BYTES: usize = 17;
-pub const SNDRV_PCM_HW_PARAM_TICK_TIME: usize = 18;
+pub const SNDRV_PCM_HW_PARAM_SAMPLE_BITS: usize = 8;
+pub const SNDRV_PCM_HW_PARAM_FRAME_BITS: usize = 9;
+pub const SNDRV_PCM_HW_PARAM_CHANNELS: usize = 10;
+pub const SNDRV_PCM_HW_PARAM_RATE: usize = 11;
+pub const SNDRV_PCM_HW_PARAM_PERIOD_TIME: usize = 12;
+pub const SNDRV_PCM_HW_PARAM_PERIOD_SIZE: usize = 13;
+pub const SNDRV_PCM_HW_PARAM_PERIOD_BYTES: usize = 14;
+pub const SNDRV_PCM_HW_PARAM_PERIODS: usize = 15;
+pub const SNDRV_PCM_HW_PARAM_BUFFER_TIME: usize = 16;
+pub const SNDRV_PCM_HW_PARAM_BUFFER_SIZE: usize = 17;
+pub const SNDRV_PCM_HW_PARAM_BUFFER_BYTES: usize = 18;
+pub const SNDRV_PCM_HW_PARAM_TICK_TIME: usize = 19;
 
 // Specific formats and access
 pub const SNDRV_PCM_FORMAT_S24_LE: u32 = 6;

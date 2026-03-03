@@ -34,18 +34,18 @@ impl Device {
         let _mask_idx_access = SNDRV_PCM_HW_PARAM_ACCESS;
         let _mask_idx_format = SNDRV_PCM_HW_PARAM_FORMAT;
 
-        hw_params.masks[0] = 1 << SNDRV_PCM_ACCESS_RW_INTERLEAVED;
+        hw_params.masks[0].bits[0] = 1 << SNDRV_PCM_ACCESS_RW_INTERLEAVED;
         // 0 -> Access. masks[0] represents the mask for ACCESS. The bit to set is SNDRV_PCM_ACCESS_RW_INTERLEAVED (3) -> 1<<3.
 
-        hw_params.masks[1] = 1 << SNDRV_PCM_FORMAT_S24_LE;
+        hw_params.masks[1].bits[0] = 1 << SNDRV_PCM_FORMAT_S24_LE;
         // 1 -> Format. masks[1] represents the mask for FORMAT. The bit is 6 -> 1<<6.
 
         // Let's set the mask bits for the requested parameters.
         hw_params.rmask = !0; // Request all params
 
-        // Interval indices map to intervals[index - 7] since interval params start at 7 (SNDRV_PCM_HW_PARAM_SAMPLE_BITS).
+        // Interval indices map to intervals[index - 8] since interval params start at 8 (SNDRV_PCM_HW_PARAM_SAMPLE_BITS).
         let set_interval = |params: &mut SndrPcmHwParams, param_idx: usize, val: u32| {
-            let idx = param_idx - 7;
+            let idx = param_idx - 8;
             params.intervals[idx].min = val;
             params.intervals[idx].max = val;
             params.intervals[idx].flags = 2; // integer
@@ -62,10 +62,10 @@ impl Device {
         }
 
         // Validation: Verify the device didn't fallback to a different rate or format.
-        if hw_params.masks[1] & (1 << SNDRV_PCM_FORMAT_S24_LE) == 0 {
+        if hw_params.masks[1].bits[0] & (1 << SNDRV_PCM_FORMAT_S24_LE) == 0 {
             panic!("Device fallback: does not support S24_LE format");
         }
-        if hw_params.intervals[SNDRV_PCM_HW_PARAM_RATE - 7].min != 48000 {
+        if hw_params.intervals[SNDRV_PCM_HW_PARAM_RATE - 8].min != 48000 {
             panic!("Device fallback: does not support 48000 Hz");
         }
 

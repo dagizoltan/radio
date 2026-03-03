@@ -109,10 +109,10 @@ async fn stop_stream(State(state): State<Arc<AppState>>) -> StatusCode {
     StatusCode::OK
 }
 
-async fn metrics_handler(State(_state): State<Arc<AppState>>) -> String {
+async fn metrics_handler(State(state): State<Arc<AppState>>) -> String {
     // Prometheus format
-    let overruns = 0; // Replace with actual overrun metrics if stored in state
-    let put_latency = 0.0; // Replace with actual metrics
+    let overruns = state.overruns.load(std::sync::atomic::Ordering::Relaxed);
+    let put_latency = 0.0; // Replace with actual metrics if tracked
 
     format!(
         "# HELP radio_capture_overruns_total Total ALSA capture buffer overruns.\n\
