@@ -5,7 +5,7 @@ WORKDIR /app
 USER deno
 
 # Cache the dependencies as a layer
-COPY --chown=deno:deno main.js .
+COPY --chown=deno:deno deno.json main.js ./
 
 RUN deno cache main.js
 
