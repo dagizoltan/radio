@@ -8,11 +8,17 @@ use bytes::Bytes;
 use reqwest::StatusCode;
 use std::{convert::Infallible, sync::Arc};
 use tokio_stream::{Stream, StreamExt};
+use tower_http::cors::{Any, CorsLayer};
 use crate::state::AppState;
 
 use tokio_util::sync::CancellationToken;
 
 pub async fn run_server(state: Arc<AppState>, token: CancellationToken) {
+    let cors = CorsLayer::new()
+        .allow_origin(Any)
+        .allow_methods(Any)
+        .allow_headers(Any);
+
     let app = Router::new()
         .route("/", get(index))
         .route("/events", get(sse_handler))
@@ -20,6 +26,7 @@ pub async fn run_server(state: Arc<AppState>, token: CancellationToken) {
         .route("/start", post(start_stream))
         .route("/stop", post(stop_stream))
         .route("/metrics", get(metrics_handler))
+        .layer(cors)
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();

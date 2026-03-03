@@ -19,3 +19,4 @@ sha2 = "0.10.9"
 hex = "0.4.3"
 time = "0.3.47"
 libc = "0.2.182"
+tower-http = { version = "0.6.8", features = ["cors"] }
