@@ -1,0 +1,32 @@
+version: '3.8'
+
+services:
+  radio-server:
+    build:
+      context: ./radio-server
+      dockerfile: Dockerfile
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./archive:/app/archive
+      - ./recordings:/app/recordings
+    # Ensure Docker has access to ALSA host audio devices if needed.
+    # Note: On macOS this may not capture host audio directly,
+    # but the mock device logic should prevent crashes.
+    devices:
+      - /dev/snd:/dev/snd
+    environment:
+      - RUST_LOG=info
+
+  radio-client:
+    build:
+      context: ./radio-client
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"
+    environment:
+      - TOKEN_SECRET=super_secret_dev_token
+      - R2_PUBLIC_URL=http://radio-server:8080/manifest.json
+      - EVENTS_URL=http://radio-server:8080/events
+    depends_on:
+      - radio-server
