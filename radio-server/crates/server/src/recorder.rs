@@ -9,11 +9,13 @@ use std::fs::File;
 use std::io::Write;
 use std::path::PathBuf;
 use std::sync::atomic::Ordering;
+use tokio_util::sync::CancellationToken;
 
 pub struct RecorderTask {
     pcm_tx: mpsc::Sender<Arc<Vec<i32>>>,
     state: Arc<AppState>,
     local_archive_dir: PathBuf,
+    token: CancellationToken,
 }
 
 impl RecorderTask {
@@ -21,11 +23,13 @@ impl RecorderTask {
         pcm_tx: mpsc::Sender<Arc<Vec<i32>>>,
         state: Arc<AppState>,
         local_archive_dir: PathBuf,
+        token: CancellationToken,
     ) -> Self {
         RecorderTask {
             pcm_tx,
             state,
             local_archive_dir,
+            token,
         }
     }
 
@@ -74,7 +78,23 @@ impl RecorderTask {
             }
 
             // Wait for ALSA readable event
-            let pcm_data = capture_loop.read_period().await?;
+            let (pcm_data, overrun) = match capture_loop.read_period().await {
+                Ok(res) => res,
+                Err(e) => {
+                    let errno = e.raw_os_error().unwrap_or(0);
+                    if errno == libc::ENODEV {
+                        eprintln!("RecorderTask: Device disconnected (ENODEV). Initiating shutdown.");
+                        self.token.cancel();
+                        return Err(e);
+                    } else {
+                        return Err(e);
+                    }
+                }
+            };
+
+            if overrun {
+                self.state.overruns.fetch_add(1, Ordering::Relaxed);
+            }
             let frames_read = pcm_data.len() / 2;
 
             // Calculate VU values

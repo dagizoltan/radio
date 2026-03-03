@@ -20,7 +20,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let local_archive_dir = PathBuf::from("./archive");
     std::fs::create_dir_all(&local_archive_dir)?;
 
-    let recorder = RecorderTask::new(pcm_tx, state.clone(), local_archive_dir);
+    let recorder = RecorderTask::new(pcm_tx, state.clone(), local_archive_dir, token.clone());
     let converter = ConverterTask::new(pcm_rx, seg_tx, state.clone());
     let uploader = UploaderTask::new(seg_rx, state.clone()).await;
 

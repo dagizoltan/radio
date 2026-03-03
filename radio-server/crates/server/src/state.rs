@@ -16,6 +16,7 @@ pub struct AppState {
     pub local_segments: Mutex<VecDeque<(u64, Bytes)>>,
     pub flac_header: Mutex<Option<Bytes>>,
     pub sse_tx: broadcast::Sender<String>,
+    pub overruns: AtomicU64,
 }
 
 impl AppState {
@@ -33,6 +34,7 @@ impl AppState {
             local_segments: Mutex::new(VecDeque::new()),
             flac_header: Mutex::new(None),
             sse_tx,
+            overruns: AtomicU64::new(0),
         }
     }
 }

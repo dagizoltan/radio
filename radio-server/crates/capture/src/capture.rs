@@ -13,7 +13,7 @@ impl CaptureLoop {
         Ok(CaptureLoop { async_fd })
     }
 
-    pub async fn read_period(&self) -> std::io::Result<Vec<i32>> {
+    pub async fn read_period(&self) -> std::io::Result<(Vec<i32>, bool)> {
         loop {
             let mut guard = self.async_fd.readable().await?;
 
@@ -41,7 +41,6 @@ impl CaptureLoop {
                 if errno == EPIPE {
                     // XRUN Recovery
                     eprintln!("WARN: ALSA buffer overrun (EPIPE)");
-                    // radio_capture_overruns_total++ -> this would go in metrics.
 
                     // Synthesize a zero-padded buffer of exactly 4096 * 2 (8192) 0i32 values.
                     let silence = vec![0i32; 8192];
@@ -49,13 +48,14 @@ impl CaptureLoop {
                     // Call IOCTL_PREPARE to reset the hardware.
                     unsafe { libc::ioctl(*self.async_fd.get_ref(), SNDRV_PCM_IOCTL_PREPARE as _) };
 
-                    // Return the silence buffer
-                    return Ok(silence);
+                    // Return the silence buffer and indicate overrun
+                    return Ok((silence, true));
                 } else if errno == EAGAIN || errno == EWOULDBLOCK {
                     guard.clear_ready();
                     continue;
                 } else if errno == ENODEV {
-                    panic!("FATAL: Device disconnected mid-stream");
+                    eprintln!("FATAL: Device disconnected mid-stream");
+                    return Err(err);
                 } else {
                     return Err(err);
                 }
@@ -74,7 +74,7 @@ impl CaptureLoop {
                     pcm_out.push(sample);
                 }
 
-                return Ok(pcm_out);
+                return Ok((pcm_out, false));
             }
         }
     }

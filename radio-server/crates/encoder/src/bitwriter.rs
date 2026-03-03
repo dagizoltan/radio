@@ -92,10 +92,10 @@ mod tests {
     #[test]
     fn test_bitwriter_bounds() {
         let mut bw = BitWriter::new();
-        bw.write_bits(0b110, 3);
+        bw.write_bits(0b101, 3);
         bw.write_bits(0b11111, 5);
         let bytes = bw.into_bytes();
-        assert_eq!(bytes, vec![0xDF]);
+        assert_eq!(bytes, vec![0xBF]);
     }
 
     #[test]
