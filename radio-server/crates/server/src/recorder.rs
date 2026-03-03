@@ -34,13 +34,20 @@ impl RecorderTask {
     }
 
     pub async fn run(self) -> std::io::Result<()> {
-        let device_path = discover_device();
-        println!("Opening capture device: {}", device_path);
+        let (device_path, channels) = discover_device();
+        println!("Opening capture device: {} with {} channels", device_path, channels);
 
-        let device = Device::open(&device_path);
+        let device = Device::open(&device_path, channels);
         device.prepare();
 
-        let capture_loop = CaptureLoop::new(device.raw_fd())?;
+        // The input channels to use for Left and Right (0-indexed).
+        // For a 4-channel device, maybe 0 and 1, or 2 and 3.
+        let left_channel = std::env::var("AUDIO_LEFT_CHANNEL").unwrap_or_else(|_| "0".to_string()).parse().unwrap_or(0);
+        let right_channel = std::env::var("AUDIO_RIGHT_CHANNEL").unwrap_or_else(|_| "1".to_string()).parse().unwrap_or(1);
+
+        println!("Using channel {} for Left, channel {} for Right", left_channel, right_channel);
+
+        let capture_loop = CaptureLoop::new(device.raw_fd(), channels, left_channel, right_channel)?;
 
         // For local archive file
         let mut archive_file: Option<File> = None;
