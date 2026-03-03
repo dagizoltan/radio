@@ -5,6 +5,8 @@ use tokio_util::sync::CancellationToken;
 use server::state::AppState;
 use server::recorder::RecorderTask;
 use server::converter::ConverterTask;
+use server::uploader::UploaderTask;
+use server::http::run_server;
 use std::path::PathBuf;
 
 #[tokio::main]
@@ -13,13 +15,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let token = CancellationToken::new();
 
     let (pcm_tx, pcm_rx) = mpsc::channel(16);
-    let (seg_tx, mut seg_rx) = mpsc::channel(3); // Wait, this needs to go to Uploader, but Uploader isn't here yet!
+    let (seg_tx, seg_rx) = mpsc::channel(3);
 
     let local_archive_dir = PathBuf::from("./archive");
     std::fs::create_dir_all(&local_archive_dir)?;
 
     let recorder = RecorderTask::new(pcm_tx, state.clone(), local_archive_dir);
     let converter = ConverterTask::new(pcm_rx, seg_tx, state.clone());
+    let uploader = UploaderTask::new(seg_rx, state.clone()).await;
 
     let recorder_handle = tokio::spawn(async move {
         if let Err(e) = recorder.run().await {
@@ -31,11 +34,14 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         converter.run().await;
     });
 
-    // Mock Uploader Task to drain the segment channel so it doesn't fill up
-    let mock_uploader_handle = tokio::spawn(async move {
-        while let Some((idx, hq, lq)) = seg_rx.recv().await {
-            println!("Mock Uploader: Received segment {} (HQ: {} bytes, LQ: {} bytes)", idx, hq.len(), lq.len());
-        }
+    let uploader_handle = tokio::spawn(async move {
+        uploader.run().await;
+    });
+
+    let http_state = state.clone();
+    let http_token = token.clone();
+    let http_handle = tokio::spawn(async move {
+        run_server(http_state, http_token).await;
     });
 
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -55,7 +61,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Await all with timeout
     let timeout_duration = Duration::from_secs(25);
     let result = tokio::time::timeout(timeout_duration, async {
-        let _ = tokio::join!(recorder_handle, converter_handle, mock_uploader_handle);
+        let _ = tokio::join!(recorder_handle, converter_handle, uploader_handle, http_handle);
     }).await;
 
     if result.is_err() {

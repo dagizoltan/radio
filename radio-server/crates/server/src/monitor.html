@@ -1,0 +1,88 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Radio Monitor</title>
+    <style>
+        body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
+        .vu { display: inline-block; width: 200px; height: 20px; background: #333; margin-right: 10px; }
+        .vu-inner { height: 100%; background: #0f0; transition: width 0.1s; }
+        .controls { margin-top: 20px; }
+        button { padding: 10px; background: #444; color: white; border: none; cursor: pointer; }
+        button:hover { background: #555; }
+        #logs { margin-top: 20px; height: 300px; overflow-y: auto; background: #222; padding: 10px; border: 1px solid #444; }
+    </style>
+</head>
+<body>
+    <h1>Radio Monitor</h1>
+    <div>
+        <label>Streaming: <span id="streaming-status">Unknown</span></label>
+    </div>
+    <div>
+        <label>Left VU: </label>
+        <div class="vu"><div id="vu-left" class="vu-inner" style="width: 0%"></div></div>
+    </div>
+    <div>
+        <label>Right VU:</label>
+        <div class="vu"><div id="vu-right" class="vu-inner" style="width: 0%"></div></div>
+    </div>
+    <div>
+        <label>R2 Segment:</label> <span id="r2-segment">0</span>
+    </div>
+
+    <div class="controls">
+        <button onclick="startStream()">Start Stream</button>
+        <button onclick="stopStream()">Stop Stream</button>
+    </div>
+
+    <div id="logs"></div>
+
+    <script>
+        const evtSource = new EventSource("/events");
+        const logs = document.getElementById('logs');
+
+        function log(msg) {
+            const div = document.createElement('div');
+            div.textContent = `[${new Date().toISOString()}] ${msg}`;
+            logs.appendChild(div);
+            logs.scrollTop = logs.scrollHeight;
+        }
+
+        evtSource.onmessage = function(e) {
+            try {
+                if (e.data === "keepalive") return;
+                const data = JSON.parse(e.data);
+
+                if (data.type === "metrics") {
+                    document.getElementById('streaming-status').textContent = data.streaming ? "Yes" : "No";
+
+                    // VU max is ~8388607 for 24-bit
+                    const vuMax = 8388607;
+                    const pctLeft = Math.min(100, Math.max(0, (data.vu_left / vuMax) * 100));
+                    const pctRight = Math.min(100, Math.max(0, (data.vu_right / vuMax) * 100));
+
+                    document.getElementById('vu-left').style.width = pctLeft + '%';
+                    document.getElementById('vu-right').style.width = pctRight + '%';
+
+                    document.getElementById('r2-segment').textContent = data.r2_segment;
+                } else if (data.type === "log" || data.error) {
+                    log(JSON.stringify(data));
+                }
+            } catch (err) {}
+        };
+
+        evtSource.addEventListener("ping", function(e) {
+            // Keepalive
+        });
+
+        async function startStream() {
+            await fetch('/start', { method: 'POST' });
+        }
+
+        async function stopStream() {
+            await fetch('/stop', { method: 'POST' });
+        }
+    </script>
+</body>
+</html>

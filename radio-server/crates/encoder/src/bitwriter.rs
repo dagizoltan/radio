@@ -39,7 +39,11 @@ impl BitWriter {
 
             let chunk_mask = if to_write == 64 { u64::MAX } else { (1 << to_write) - 1 };
 
-            self.accumulator = (self.accumulator << to_write) | (chunk & chunk_mask);
+            if to_write == 64 {
+                self.accumulator = chunk & chunk_mask;
+            } else {
+                self.accumulator = (self.accumulator << to_write) | (chunk & chunk_mask);
+            }
             self.bits_in_accumulator += to_write;
 
             bits -= to_write;
