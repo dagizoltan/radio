@@ -248,7 +248,7 @@ impl UploaderTask {
     }
 
     async fn upload_with_retry(&self, quality: &str, index: u64, body: Vec<u8>, content_type: &str) -> bool {
-        let uri = format!("/live/{}/segment-{}.flac", quality, index);
+        let uri = format!("/live/{}/segment-{:08}.flac", quality, index);
 
         for attempt in 0..3 {
             if attempt > 0 {
@@ -342,7 +342,7 @@ impl UploaderTask {
     }
 
     async fn delete_s3_segment(&self, quality: &str, index: u64) {
-        let uri = format!("/live/{}/segment-{}.flac", quality, index);
+        let uri = format!("/live/{}/segment-{:08}.flac", quality, index);
         let access_key = std::env::var("R2_ACCESS_KEY").unwrap_or_else(|_| "test_access".to_string());
         let secret_key = std::env::var("R2_SECRET_KEY").unwrap_or_else(|_| "test_secret".to_string());
         let endpoint = std::env::var("R2_ENDPOINT").unwrap_or_else(|_| "https://test.s3.amazonaws.com".to_string());

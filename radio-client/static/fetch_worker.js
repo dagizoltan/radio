@@ -5,6 +5,7 @@ let isInitialized = false;
 let isPlaying = false;
 let quality = 'hq'; // 'hq' or 'lq'
 let token = null;
+let r2Url = null;
 
 let currentIndex = 0;
 let latestIndex = 0;
@@ -24,6 +25,7 @@ onmessage = async (e) => {
                 await decoder.init();
                 isInitialized = true;
                 token = msg.token;
+                r2Url = msg.r2Url;
                 postMessage({ type: 'INIT_DONE' });
                 pollManifest();
             }
@@ -93,13 +95,18 @@ async function pollManifest() {
 async function fetchNextSegment() {
     if (!isPlaying) return;
 
-    // Jump-Ahead Logic
-    if (currentIndex < latestIndex - bufferTarget - 1) {
-        console.log(`Jumping ahead from ${currentIndex} to ${latestIndex - 1}`);
+    // Jump-Ahead / Rollover Logic
+    // If we are way behind or sequence wrapped around (e.g., rollover at 100,000,000)
+    if (currentIndex < latestIndex - bufferTarget - 1 || currentIndex > latestIndex + 1000) {
+        console.log(`Jumping ahead/rolling over from ${currentIndex} to ${latestIndex - 1}`);
         currentIndex = latestIndex - 1;
     }
 
-    const segmentUrl = `/audio/${quality}/${currentIndex}.flac?token=${token}`;
+    // Fix index constraint #14: 8-digit padding
+    const paddedIndex = currentIndex.toString().padStart(8, '0');
+
+    // Fetch directly from R2 URL (Constraint #11, #13)
+    const segmentUrl = `${r2Url}/live/${quality}/segment-${paddedIndex}.flac?token=${token}`;
     const startTime = performance.now();
 
     try {

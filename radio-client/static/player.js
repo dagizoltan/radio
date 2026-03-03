@@ -81,6 +81,8 @@ class RadioPlayer extends HTMLElement {
     async connectedCallback() {
         this.token = this.getAttribute('data-token');
         this.isLive = this.getAttribute('data-live') === 'true';
+        this.r2Url = this.getAttribute('data-r2-url');
+        this.eventsUrl = this.getAttribute('data-events-url');
 
         this.playBtn = this.shadowRoot.getElementById('playBtn');
         this.statusDiv = this.shadowRoot.getElementById('status');
@@ -107,7 +109,7 @@ class RadioPlayer extends HTMLElement {
             }
         };
 
-        this.worker.postMessage({ type: 'INIT', token: this.token });
+        this.worker.postMessage({ type: 'INIT', token: this.token, r2Url: this.r2Url });
 
         // Multi-Tab Prevention
         navigator.locks.request("radio-player-singleton", async (lock) => {
@@ -185,19 +187,31 @@ class RadioPlayer extends HTMLElement {
 
             navigator.mediaSession.setActionHandler('play', () => {
                 if (!this.audioCtx || this.audioCtx.state === 'suspended') {
-                    this.togglePlay();
+                    if (this.playBtn.textContent === 'Stop') {
+                        // Internal state is playing, but audio context was suspended. Just resume.
+                        this.audioCtx.resume();
+                    } else {
+                        // Internal state is stopped, toggle play.
+                        this.togglePlay();
+                    }
                 }
             });
 
             navigator.mediaSession.setActionHandler('pause', () => {
                 if (this.audioCtx && this.audioCtx.state === 'running') {
-                    this.togglePlay();
+                    if (this.playBtn.textContent === 'Stop') {
+                        this.togglePlay();
+                    } else {
+                        this.audioCtx.suspend();
+                    }
                 }
             });
 
             navigator.mediaSession.setActionHandler('stop', () => {
                 if (this.audioCtx && this.audioCtx.state === 'running') {
-                    this.togglePlay();
+                    if (this.playBtn.textContent === 'Stop') {
+                        this.togglePlay();
+                    }
                 }
             });
         }
@@ -210,7 +224,8 @@ class RadioPlayer extends HTMLElement {
     }
 
     setupSSE() {
-        this.eventSource = new EventSource('/api/events');
+        if (!this.eventsUrl) return;
+        this.eventSource = new EventSource(this.eventsUrl);
 
         this.eventSource.onmessage = (event) => {
             try {

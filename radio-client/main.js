@@ -32,27 +32,6 @@ async function generateToken(ip) {
 // Serve static files
 app.use('/static/*', serveStatic({ root: './' }));
 
-// Events Proxy
-app.get('/api/events', async (c) => {
-  const axumEventsUrl = Deno.env.get('EVENTS_URL') || 'http://localhost:8080/events';
-  try {
-    const response = await fetch(axumEventsUrl);
-
-    // We stream the exact response back to the client
-    return new Response(response.body, {
-      status: response.status,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive'
-      }
-    });
-  } catch (err) {
-    console.error('Events proxy error:', err);
-    return c.json({ error: 'Failed to connect to events stream' }, 500);
-  }
-});
-
 // Token Refresh
 app.post('/api/token', async (c) => {
   const origin = c.req.header('Origin');
@@ -112,6 +91,12 @@ app.get('/', async (c) => {
     live = 'false';
   }
 
+  // Base R2 URL for fetching chunks directly
+  let r2BaseUrl = Deno.env.get('PUBLIC_R2_URL') || 'http://localhost:8080';
+
+  // Provide Events URL for client
+  let eventsUrl = Deno.env.get('PUBLIC_EVENTS_URL') || 'http://localhost:8080/events';
+
   return c.html(html`
     <!DOCTYPE html>
     <html lang="en">
@@ -122,7 +107,7 @@ app.get('/', async (c) => {
       <script type="module" src="/static/player.js"></script>
     </head>
     <body>
-      <radio-player data-token="${token}" data-live="${live}"></radio-player>
+      <radio-player data-token="${token}" data-live="${live}" data-r2-url="${r2BaseUrl}" data-events-url="${eventsUrl}"></radio-player>
     </body>
     </html>
   `);

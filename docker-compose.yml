@@ -32,7 +32,8 @@ services:
     environment:
       - TOKEN_SECRET=super_secret_dev_token
       - R2_PUBLIC_URL=http://radio-server:8080/manifest.json
-      - EVENTS_URL=http://radio-server:8080/events
+      - PUBLIC_R2_URL=http://localhost:8080
+      - PUBLIC_EVENTS_URL=http://localhost:8080/events
     depends_on:
       - radio-server
 
