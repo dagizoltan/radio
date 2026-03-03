@@ -22,6 +22,11 @@ class RadioProcessor extends AudioWorkletProcessor {
                 return;
             }
 
+            if (data.type === "SET_VOLUME") {
+                this.volume = data.volume;
+                return;
+            }
+
             if (data === "QUERY_DEPTH") {
                 this.port.postMessage({ type: "DEPTH", samplesAvailable: this.samplesAvailable });
                 return;

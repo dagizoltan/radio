@@ -19,10 +19,38 @@ class RadioPlayer extends HTMLElement {
                     padding: 10px 20px;
                     font-size: 16px;
                     cursor: pointer;
+                    border: 1px solid #ccc;
+                    border-radius: 4px;
+                    background: #f8f9fa;
+                    transition: background 0.2s, color 0.2s;
+                }
+                button:disabled {
+                    opacity: 0.6;
+                    cursor: not-allowed;
+                    background: #e9ecef;
+                }
+                button:hover:not(:disabled) {
+                    background: #e2e6ea;
+                }
+                .controls-container {
+                    display: flex;
+                    align-items: center;
+                    gap: 15px;
+                    margin-top: 15px;
+                    flex-wrap: wrap;
                 }
                 .status {
-                    margin-top: 10px;
-                    color: #666;
+                    margin-top: 15px;
+                    color: #495057;
+                    font-size: 14px;
+                }
+                .buffering {
+                    animation: pulse 1.5s infinite;
+                }
+                @keyframes pulse {
+                    0% { opacity: 0.6; }
+                    50% { opacity: 1; }
+                    100% { opacity: 0.6; }
                 }
                 .overlay {
                     display: none;
@@ -41,6 +69,11 @@ class RadioPlayer extends HTMLElement {
                 <button id="playBtn" disabled>Loading...</button>
                 <div class="status" id="status">Initializing</div>
                 <div class="overlay" id="unlockOverlay">Click anywhere to unlock audio</div>
+
+                <div class="controls-container">
+                    <button id="muteBtn" disabled>Mute</button>
+                    <input type="range" id="volumeSlider" min="0" max="1" step="0.01" value="1" disabled>
+                </div>
             </div>
         `;
     }
@@ -52,6 +85,10 @@ class RadioPlayer extends HTMLElement {
         this.playBtn = this.shadowRoot.getElementById('playBtn');
         this.statusDiv = this.shadowRoot.getElementById('status');
         this.unlockOverlay = this.shadowRoot.getElementById('unlockOverlay');
+        this.muteBtn = this.shadowRoot.getElementById('muteBtn');
+        this.volumeSlider = this.shadowRoot.getElementById('volumeSlider');
+
+        this.setupSSE();
 
         if (!this.isLive) {
             this.playBtn.disabled = true;
@@ -75,6 +112,8 @@ class RadioPlayer extends HTMLElement {
         // Multi-Tab Prevention
         navigator.locks.request("radio-player-singleton", async (lock) => {
             this.playBtn.disabled = false;
+            this.muteBtn.disabled = false;
+            this.volumeSlider.disabled = false;
             this.playBtn.textContent = 'Play Lossless Radio';
             this.statusDiv.textContent = 'Ready';
 
@@ -101,6 +140,113 @@ class RadioPlayer extends HTMLElement {
 
         this.playBtn.addEventListener('click', () => this.togglePlay());
         this.unlockOverlay.addEventListener('click', () => this.unlockAudio());
+
+        // Volume controls handlers
+        this.volumeSlider.addEventListener('input', (e) => this.setVolume(e.target.value));
+        this.muteBtn.addEventListener('click', () => this.toggleMute());
+
+        this.setupMediaSession();
+    }
+
+    setVolume(value) {
+        this.currentVolume = parseFloat(value);
+
+        // If adjusting volume while muted, automatically unmute.
+        if (this.muteBtn.textContent === 'Unmute') {
+            this.muteBtn.textContent = 'Mute';
+        }
+
+        if (this.workletNode) {
+            this.workletNode.port.postMessage({ type: 'SET_VOLUME', volume: this.currentVolume });
+        }
+    }
+
+    toggleMute() {
+        if (this.muteBtn.textContent === 'Mute') {
+            this.muteBtn.textContent = 'Unmute';
+            if (this.workletNode) {
+                this.workletNode.port.postMessage({ type: 'SET_VOLUME', volume: 0 });
+            }
+        } else {
+            this.muteBtn.textContent = 'Mute';
+            if (this.workletNode) {
+                this.workletNode.port.postMessage({ type: 'SET_VOLUME', volume: this.volumeSlider.value });
+            }
+        }
+    }
+
+    setupMediaSession() {
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: 'Lossless Web Radio',
+                artist: 'Live Stream',
+                album: 'Radio Server'
+            });
+
+            navigator.mediaSession.setActionHandler('play', () => {
+                if (!this.audioCtx || this.audioCtx.state === 'suspended') {
+                    this.togglePlay();
+                }
+            });
+
+            navigator.mediaSession.setActionHandler('pause', () => {
+                if (this.audioCtx && this.audioCtx.state === 'running') {
+                    this.togglePlay();
+                }
+            });
+
+            navigator.mediaSession.setActionHandler('stop', () => {
+                if (this.audioCtx && this.audioCtx.state === 'running') {
+                    this.togglePlay();
+                }
+            });
+        }
+    }
+
+    updateMediaSessionState(state) {
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = state;
+        }
+    }
+
+    setupSSE() {
+        this.eventSource = new EventSource('/api/events');
+
+        this.eventSource.onmessage = (event) => {
+            try {
+                // Try parsing as JSON first, since we might pass JSON from the server
+                // Alternatively, backend might pass text strings. For robustness:
+                let msg = event.data;
+
+                // For this session, we assume the server sends now-playing text directly
+                // or we can parse if it's JSON.
+                let title = msg;
+                if (msg.startsWith('{')) {
+                    const data = JSON.parse(msg);
+                    if (data.title) title = data.title;
+                }
+
+                if (title && title !== 'keepalive') {
+                    this.statusDiv.textContent = `Playing: ${title}`;
+                    this.statusDiv.classList.remove('buffering');
+
+                    if ('mediaSession' in navigator) {
+                        navigator.mediaSession.metadata = new MediaMetadata({
+                            title: title,
+                            artist: 'Live Stream',
+                            album: 'Radio Server'
+                        });
+                    }
+                }
+            } catch (err) {
+                console.error("Error processing SSE message:", err);
+            }
+        };
+
+        this.eventSource.onerror = (err) => {
+            console.warn("SSE Error, reconnecting...", err);
+            // EventSource auto-reconnects, so we don't strictly need to do anything
+        };
     }
 
     async togglePlay() {
@@ -155,6 +301,8 @@ class RadioPlayer extends HTMLElement {
                 this.worker.postMessage({ type: 'STOP' });
                 this.playBtn.textContent = 'Play Lossless Radio';
                 this.statusDiv.textContent = 'Paused';
+                this.statusDiv.classList.remove('buffering');
+                this.updateMediaSessionState('paused');
                 return;
             } else {
                 this.audioCtx.resume();
@@ -164,6 +312,8 @@ class RadioPlayer extends HTMLElement {
 
         this.playBtn.textContent = 'Stop';
         this.statusDiv.textContent = 'Playing...';
+        this.statusDiv.classList.add('buffering');
+        this.updateMediaSessionState('playing');
     }
 
     checkAudioState() {
@@ -183,6 +333,7 @@ class RadioPlayer extends HTMLElement {
     }
 
     disconnectedCallback() {
+        if (this.eventSource) this.eventSource.close();
         if (this._releaseLock) this._releaseLock();
         if (this.worker) this.worker.terminate();
         if (this.audioCtx) this.audioCtx.close();

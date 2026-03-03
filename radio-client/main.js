@@ -32,6 +32,27 @@ async function generateToken(ip) {
 // Serve static files
 app.use('/static/*', serveStatic({ root: './' }));
 
+// Events Proxy
+app.get('/api/events', async (c) => {
+  const axumEventsUrl = Deno.env.get('EVENTS_URL') || 'http://localhost:8080/events';
+  try {
+    const response = await fetch(axumEventsUrl);
+
+    // We stream the exact response back to the client
+    return new Response(response.body, {
+      status: response.status,
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      }
+    });
+  } catch (err) {
+    console.error('Events proxy error:', err);
+    return c.json({ error: 'Failed to connect to events stream' }, 500);
+  }
+});
+
 // Token Refresh
 app.post('/api/token', async (c) => {
   const origin = c.req.header('Origin');
