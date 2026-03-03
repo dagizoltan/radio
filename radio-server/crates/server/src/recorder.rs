@@ -37,10 +37,15 @@ impl RecorderTask {
         let device_path = discover_device();
         println!("Opening capture device: {}", device_path);
 
-        let device = Device::open(&device_path);
-        device.prepare();
+        // Implement Mock Logic to prevent panic on docker dev machines
+        let is_mock = device_path == "mock_device";
+        let mut capture_loop = None;
 
-        let capture_loop = CaptureLoop::new(device.raw_fd())?;
+        if !is_mock {
+            let device = Device::open(&device_path);
+            device.prepare();
+            capture_loop = Some(CaptureLoop::new(device.raw_fd())?);
+        }
 
         // For local archive file
         let mut archive_file: Option<File> = None;
@@ -77,19 +82,26 @@ impl RecorderTask {
                 file_frame_number = 0; // reset FLAC frame numbering for the new file
             }
 
-            // Wait for ALSA readable event
-            let (pcm_data, overrun) = match capture_loop.read_period().await {
-                Ok(res) => res,
-                Err(e) => {
-                    let errno = e.raw_os_error().unwrap_or(0);
-                    if errno == libc::ENODEV {
-                        eprintln!("RecorderTask: Device disconnected (ENODEV). Initiating shutdown.");
-                        self.token.cancel();
-                        return Err(e);
-                    } else {
-                        return Err(e);
+            // Wait for ALSA readable event, or generate mock silence
+            let (pcm_data, overrun) = if let Some(loop_ref) = &capture_loop {
+                match loop_ref.read_period().await {
+                    Ok(res) => res,
+                    Err(e) => {
+                        let errno = e.raw_os_error().unwrap_or(0);
+                        if errno == libc::ENODEV {
+                            eprintln!("RecorderTask: Device disconnected (ENODEV). Initiating shutdown.");
+                            self.token.cancel();
+                            return Err(e);
+                        } else {
+                            return Err(e);
+                        }
                     }
                 }
+            } else {
+                // Mock device loop: Wait ~85ms for 4096 samples at 48kHz
+                tokio::time::sleep(std::time::Duration::from_millis(85)).await;
+                let silence = vec![0i32; 8192]; // 4096 frames * 2 channels
+                (silence, false)
             };
 
             if overrun {

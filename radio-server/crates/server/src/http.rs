@@ -22,7 +22,7 @@ pub async fn run_server(state: Arc<AppState>, token: CancellationToken) {
     let app = Router::new()
         .route("/", get(index))
         .route("/events", get(sse_handler))
-        .route("/local/:id", get(local_segment))
+        .route("/local/{id}", get(local_segment))
         .route("/start", post(start_stream))
         .route("/stop", post(stop_stream))
         .route("/metrics", get(metrics_handler))
