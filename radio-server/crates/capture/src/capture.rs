@@ -1,6 +1,5 @@
 use crate::alsa_sys::*;
 use libc::{EAGAIN, ENODEV, EPIPE, EWOULDBLOCK};
-use std::io::Error;
 use std::os::unix::io::RawFd;
 use tokio::io::unix::AsyncFd;
 
@@ -83,8 +82,6 @@ impl CaptureLoop {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     #[test]
     fn test_sign_extension() {
         // Feed 0x00_80_00_00 (which is negative in 24-bit two's complement)

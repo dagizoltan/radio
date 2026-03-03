@@ -26,21 +26,41 @@ impl BitWriter {
             return;
         }
 
-        // Mask out any bits above 'bits' just in case
-        let mask = if bits == 64 {
-            u64::MAX
-        } else {
-            (1 << bits) - 1
-        };
-        let val = val & mask;
+        let mut bits = bits;
+        let mask = if bits == 64 { u64::MAX } else { (1 << bits) - 1 };
+        let mut val = val & mask;
 
-        self.accumulator = (self.accumulator << bits) | val;
-        self.bits_in_accumulator += bits;
+        while bits > 0 {
+            let space = 64 - self.bits_in_accumulator;
+            let to_write = std::cmp::min(bits, space);
 
-        while self.bits_in_accumulator >= 8 {
-            self.bits_in_accumulator -= 8;
-            let byte = (self.accumulator >> self.bits_in_accumulator) as u8;
-            self.buffer.push(byte);
+            let shift = bits - to_write;
+            let chunk = val >> shift;
+
+            let chunk_mask = if to_write == 64 { u64::MAX } else { (1 << to_write) - 1 };
+
+            self.accumulator = (self.accumulator << to_write) | (chunk & chunk_mask);
+            self.bits_in_accumulator += to_write;
+
+            bits -= to_write;
+
+            if bits < 64 {
+                val = val & ((1 << bits) - 1);
+            }
+
+            while self.bits_in_accumulator >= 8 {
+                let shift = self.bits_in_accumulator - 8;
+                let byte = (self.accumulator >> shift) as u8;
+                self.buffer.push(byte);
+                self.bits_in_accumulator -= 8;
+            }
+
+            if self.bits_in_accumulator > 0 {
+                let mask = if self.bits_in_accumulator == 64 { u64::MAX } else { (1 << self.bits_in_accumulator) - 1 };
+                self.accumulator = self.accumulator & mask;
+            } else {
+                self.accumulator = 0;
+            }
         }
     }
 
