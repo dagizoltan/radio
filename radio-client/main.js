@@ -98,7 +98,7 @@ app.get('/', async (c) => {
       <meta charset="UTF-8">
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Lossless Radio Player</title>
-      <script type="module" src="/static/decoder.js"></script>
+      <script type="module" src="/static/player.js"></script>
     </head>
     <body>
       <radio-player data-token="${token}" data-live="${live}"></radio-player>

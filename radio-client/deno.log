@@ -1,0 +1,8 @@
+[0m[32mDownload[0m https://registry.npmjs.org/hono
+[0m[32mDownload[0m https://registry.npmjs.org/hono/-/hono-4.0.0.tgz
+Listening on http://0.0.0.0:3000/ (http://localhost:3000/)
+Failed to fetch manifest or token during SSR: TypeError: error sending request for url (http://localhost:8080/manifest.json): client error (Connect): tcp connect error: Connection refused (os error 111)
+    at async mainFetch (ext:deno_fetch/26_fetch.js:192:12)
+    at async fetch (ext:deno_fetch/26_fetch.js:475:11)
+    at async Array.<anonymous> (file:///app/radio-client/main.js:85:22)
+    at async mapped (ext:deno_http/00_serve.ts:360:18)

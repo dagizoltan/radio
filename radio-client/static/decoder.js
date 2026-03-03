@@ -1,5 +1,3 @@
-import init, { FlacDecoder } from './flac.js';
-
 export class LosslessDecoder {
     constructor() {
         this.decoder = null;
@@ -7,7 +5,10 @@ export class LosslessDecoder {
     }
 
     async init() {
-        const wasm = await init();
+        // init is an async function exported from flac.js
+        const initFlac = (await import('./flac.js')).default;
+        const FlacDecoder = (await import('./flac.js')).FlacDecoder;
+        const wasm = await initFlac();
         this.wasmMemory = wasm.memory;
         this.decoder = new FlacDecoder();
     }
@@ -38,72 +39,4 @@ export class LosslessDecoder {
 
         return pcmCopy;
     }
-}
-
-// Simple Web Component for the player
-if (typeof HTMLElement !== 'undefined') {
-    class RadioPlayer extends HTMLElement {
-        constructor() {
-            super();
-            this.attachShadow({ mode: 'open' });
-            this.decoder = new LosslessDecoder();
-
-            this.shadowRoot.innerHTML = `
-                <style>
-                    :host {
-                        display: block;
-                        padding: 20px;
-                        font-family: sans-serif;
-                    }
-                    button {
-                        padding: 10px 20px;
-                        font-size: 16px;
-                        cursor: pointer;
-                    }
-                    .status {
-                        margin-top: 10px;
-                        color: #666;
-                    }
-                </style>
-                <div>
-                    <button id="playBtn">Play Lossless Radio</button>
-                    <div class="status" id="status">Ready</div>
-                </div>
-            `;
-        }
-
-        async connectedCallback() {
-            this.token = this.getAttribute('data-token');
-            this.isLive = this.getAttribute('data-live') === 'true';
-
-            this.playBtn = this.shadowRoot.getElementById('playBtn');
-            this.statusDiv = this.shadowRoot.getElementById('status');
-
-            if (!this.isLive) {
-                this.playBtn.disabled = true;
-                this.statusDiv.textContent = 'Stream offline (Manifest unavailable)';
-                return;
-            }
-
-            try {
-                await this.decoder.init();
-                this.playBtn.addEventListener('click', () => this.togglePlay());
-            } catch (e) {
-                this.statusDiv.textContent = 'Failed to load decoder: ' + e.message;
-                this.playBtn.disabled = true;
-            }
-        }
-
-        async togglePlay() {
-            if (this.playBtn.textContent === 'Play Lossless Radio') {
-                this.playBtn.textContent = 'Stop';
-                this.statusDiv.textContent = 'Playing...';
-            } else {
-                this.playBtn.textContent = 'Play Lossless Radio';
-                this.statusDiv.textContent = 'Ready';
-            }
-        }
-    }
-
-    customElements.define('radio-player', RadioPlayer);
 }
