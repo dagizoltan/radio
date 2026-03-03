@@ -2,6 +2,9 @@ FROM denoland/deno:1.41.0
 
 WORKDIR /app
 
+# Ensure deno user owns the working directory so it can create lockfiles
+RUN chown -R deno:deno /app
+
 USER deno
 
 # Cache the dependencies as a layer
