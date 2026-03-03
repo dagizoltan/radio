@@ -1,0 +1,9 @@
+{
+  "tasks": {
+    "dev": "deno run --watch -A main.js",
+    "test": "deno test -A"
+  },
+  "imports": {
+    "hono": "npm:hono@4.0.0"
+  }
+}
