@@ -74,7 +74,7 @@ async function pollManifest() {
         const res = await fetch('/api/manifest');
         if (res.ok) {
             const manifest = await res.json();
-            latestIndex = manifest.latest_sequence;
+            latestIndex = manifest.latest;
 
             // Initial sync or jump-ahead if too far behind
             if (currentIndex === 0 || currentIndex < latestIndex - 6) {
