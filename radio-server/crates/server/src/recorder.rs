@@ -68,6 +68,9 @@ impl RecorderTask {
 
         self.state.streaming.store(true, Ordering::SeqCst);
 
+        let mut mock_phase_l: f32 = 0.0;
+        let mut mock_phase_r: f32 = 0.0;
+
         loop {
             // Need a rotation?
             if archive_file.is_none() || frames_in_file >= frames_per_hour {
@@ -97,13 +100,23 @@ impl RecorderTask {
             // Wait for ALSA readable event or generate mock data
             let (pcm_data, overrun) = if mock_mode {
                 tokio::time::sleep(std::time::Duration::from_millis(85)).await; // Approx 4096 frames at 48kHz
-                // Generate a subtle sine wave or silence for mock testing
+                // Generate a real sine wave for mock testing: 440 Hz (L) and 880 Hz (R)
                 let mut mock_pcm = Vec::with_capacity(4096 * 2);
-                for i in 0..4096 {
-                    // Slight noise to avoid pure zeros if we want to test encoding effectively
-                    let noise = ((i % 100) as i32) * 1000;
-                    mock_pcm.push(noise); // L
-                    mock_pcm.push(noise); // R
+                let freq_l = 440.0;
+                let freq_r = 880.0;
+                let sample_rate = 48000.0;
+                // Use a reasonable amplitude for 24-bit audio (max is ~8.38M, we use 1M so it's not deafening)
+                let amplitude = 1_000_000.0;
+
+                for _ in 0..4096 {
+                    let sample_l = (mock_phase_l * std::f32::consts::TAU).sin() * amplitude;
+                    let sample_r = (mock_phase_r * std::f32::consts::TAU).sin() * amplitude;
+
+                    mock_pcm.push(sample_l as i32); // L
+                    mock_pcm.push(sample_r as i32); // R
+
+                    mock_phase_l = (mock_phase_l + freq_l / sample_rate).fract();
+                    mock_phase_r = (mock_phase_r + freq_r / sample_rate).fract();
                 }
                 (mock_pcm, false)
             } else {
