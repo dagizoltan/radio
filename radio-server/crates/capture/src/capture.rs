@@ -12,6 +12,16 @@ pub struct CaptureLoop {
 
 impl CaptureLoop {
     pub fn new(fd: RawFd, total_channels: u32, left_channel_idx: u32, right_channel_idx: u32) -> std::io::Result<Self> {
+        if left_channel_idx >= total_channels || right_channel_idx >= total_channels {
+            return Err(std::io::Error::new(
+                std::io::ErrorKind::InvalidInput,
+                format!(
+                    "Requested left/right channel indices ({}, {}) must be less than total channels ({})",
+                    left_channel_idx, right_channel_idx, total_channels
+                ),
+            ));
+        }
+
         let async_fd = AsyncFd::new(fd)?;
         Ok(CaptureLoop {
             async_fd,

@@ -37,17 +37,27 @@ impl RecorderTask {
         let (device_path, channels) = discover_device();
         println!("Opening capture device: {} with {} channels", device_path, channels);
 
-        let device = Device::open(&device_path, channels);
-        device.prepare();
+        let mut capture_loop = None;
+        let mut mock_mode = false;
+        let mut _active_device = None;
 
-        // The input channels to use for Left and Right (0-indexed).
-        // For a 4-channel device, maybe 0 and 1, or 2 and 3.
-        let left_channel = std::env::var("AUDIO_LEFT_CHANNEL").unwrap_or_else(|_| "0".to_string()).parse().unwrap_or(0);
-        let right_channel = std::env::var("AUDIO_RIGHT_CHANNEL").unwrap_or_else(|_| "1".to_string()).parse().unwrap_or(1);
+        if device_path == "mock_device" {
+            println!("Mock device mode enabled. Generating silence.");
+            mock_mode = true;
+        } else {
+            let device = Device::open(&device_path, channels);
+            device.prepare();
 
-        println!("Using channel {} for Left, channel {} for Right", left_channel, right_channel);
+            // The input channels to use for Left and Right (0-indexed).
+            // For a 4-channel device, maybe 0 and 1, or 2 and 3.
+            let left_channel = std::env::var("AUDIO_LEFT_CHANNEL").unwrap_or_else(|_| "0".to_string()).parse().unwrap_or(0);
+            let right_channel = std::env::var("AUDIO_RIGHT_CHANNEL").unwrap_or_else(|_| "1".to_string()).parse().unwrap_or(1);
 
-        let capture_loop = CaptureLoop::new(device.raw_fd(), channels, left_channel, right_channel)?;
+            println!("Using channel {} for Left, channel {} for Right", left_channel, right_channel);
+
+            capture_loop = Some(CaptureLoop::new(device.raw_fd(), channels, left_channel, right_channel)?);
+            _active_device = Some(device);
+        }
 
         // For local archive file
         let mut archive_file: Option<File> = None;
@@ -84,17 +94,30 @@ impl RecorderTask {
                 file_frame_number = 0; // reset FLAC frame numbering for the new file
             }
 
-            // Wait for ALSA readable event
-            let (pcm_data, overrun) = match capture_loop.read_period().await {
-                Ok(res) => res,
-                Err(e) => {
-                    let errno = e.raw_os_error().unwrap_or(0);
-                    if errno == libc::ENODEV {
-                        eprintln!("RecorderTask: Device disconnected (ENODEV). Initiating shutdown.");
-                        self.token.cancel();
-                        return Err(e);
-                    } else {
-                        return Err(e);
+            // Wait for ALSA readable event or generate mock data
+            let (pcm_data, overrun) = if mock_mode {
+                tokio::time::sleep(std::time::Duration::from_millis(85)).await; // Approx 4096 frames at 48kHz
+                // Generate a subtle sine wave or silence for mock testing
+                let mut mock_pcm = Vec::with_capacity(4096 * 2);
+                for i in 0..4096 {
+                    // Slight noise to avoid pure zeros if we want to test encoding effectively
+                    let noise = ((i % 100) as i32) * 1000;
+                    mock_pcm.push(noise); // L
+                    mock_pcm.push(noise); // R
+                }
+                (mock_pcm, false)
+            } else {
+                match capture_loop.as_ref().unwrap().read_period().await {
+                    Ok(res) => res,
+                    Err(e) => {
+                        let errno = e.raw_os_error().unwrap_or(0);
+                        if errno == libc::ENODEV {
+                            eprintln!("RecorderTask: Device disconnected (ENODEV). Initiating shutdown.");
+                            self.token.cancel();
+                            return Err(e);
+                        } else {
+                            return Err(e);
+                        }
                     }
                 }
             };
