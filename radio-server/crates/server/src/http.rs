@@ -82,7 +82,7 @@ async fn local_segment(
     Path(id): Path<u64>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Response, StatusCode> {
-    let segments = state.local_segments.lock().unwrap();
+    let segments = state.local_segments.lock().unwrap_or_else(|e| e.into_inner());
 
     // Find the segment with index == id
     let hq_bytes = segments.iter().find(|(index, _)| *index == id).map(|(_, bytes)| bytes.clone());
@@ -90,7 +90,7 @@ async fn local_segment(
     if let Some(audio_bytes) = hq_bytes {
         // Prepend FLAC header
         let header = {
-            let lock = state.flac_header.lock().unwrap();
+            let lock = state.flac_header.lock().unwrap_or_else(|e| e.into_inner());
             lock.clone().unwrap_or_else(|| Bytes::from(vec![]))
         };
 

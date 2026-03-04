@@ -74,7 +74,7 @@ async function pollManifest() {
         const res = await fetch('/api/manifest');
         if (res.ok) {
             const manifest = await res.json();
-            latestIndex = manifest.latest;
+            latestIndex = manifest.latest_sequence || manifest.latest;
 
             // Initial sync or jump-ahead if too far behind
             if (currentIndex === 0 || currentIndex < latestIndex - 6) {
@@ -151,7 +151,17 @@ async function fetchNextSegment() {
         }
 
         // Decode using WASM
-        const pcm = decoder.decode(new Uint8Array(arrayBuffer));
+        let pcm;
+        try {
+            pcm = decoder.decode(new Uint8Array(arrayBuffer));
+        } catch (decodeErr) {
+            console.error(`Error decoding segment ${currentIndex}:`, decodeErr);
+            currentIndex++;
+            const fetchDuration = endTime - startTime;
+            const timeToWait = Math.max(0, (segmentLengthSec * 1000) - fetchDuration - 500);
+            setTimeout(fetchNextSegment, timeToWait);
+            return;
+        }
 
         // Zero-Copy Buffer Pool Transfer
         if (pcm.length > 0 && workletPort) {
