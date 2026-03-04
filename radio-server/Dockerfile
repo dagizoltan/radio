@@ -1,5 +1,4 @@
-FROM rust:1-slim-bookworm
-
+FROM lukemathwalker/cargo-chef:latest-rust-1-slim-bookworm AS chef
 WORKDIR /app
 
 # Install dependencies (ALSA and build tools)
@@ -9,15 +8,33 @@ RUN apt-get update && apt-get install -y \
     build-essential \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy workspace members
+FROM chef AS planner
 COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
 
-# Build the server crate
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this is the caching Docker layer!
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Build application
+COPY . .
 RUN cargo build --release -p server
+
+FROM debian:bookworm-slim
+WORKDIR /app
+
+# Install runtime dependencies
+RUN apt-get update && apt-get install -y \
+    libasound2 \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy the binary from the builder
+COPY --from=builder /app/target/release/server /app/server
 
 # Create archive and recordings dir
 RUN mkdir -p /app/archive /app/recordings
 
 EXPOSE 8080
 
-CMD ["./target/release/server"]
+CMD ["./server"]
