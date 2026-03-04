@@ -78,6 +78,12 @@ async function pollManifest() {
             const manifest = await res.json();
             latestIndex = manifest.latest_sequence || manifest.latest;
 
+            if (manifest.updated_at && Date.now() - manifest.updated_at > segmentLengthSec * 3 * 1000) {
+                postMessage({ type: 'STALE_MANIFEST', isStale: true });
+            } else {
+                postMessage({ type: 'STALE_MANIFEST', isStale: false });
+            }
+
             // Initial sync or jump-ahead if too far behind
             if (currentIndex === 0 || currentIndex < latestIndex - 6) {
                 currentIndex = latestIndex - bufferTarget;
@@ -99,8 +105,11 @@ async function fetchNextSegment() {
 
     // Jump-Ahead / Rollover Logic
     // If we are way behind or sequence wrapped around (e.g., rollover at 100,000,000)
-    if (currentIndex < latestIndex - bufferTarget - 1 || currentIndex > latestIndex + 1000) {
-        console.log(`Jumping ahead/rolling over from ${currentIndex} to ${latestIndex - 1}`);
+    if (latestIndex < currentIndex && currentIndex - latestIndex > 3) {
+        console.log(`Rollover detected: currentIndex ${currentIndex}, latestIndex ${latestIndex}`);
+        currentIndex = latestIndex;
+    } else if (currentIndex < latestIndex - bufferTarget - 1) {
+        console.log(`Jumping ahead from ${currentIndex} to ${latestIndex - 1}`);
         currentIndex = latestIndex - 1;
     }
 

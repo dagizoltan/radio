@@ -85,7 +85,7 @@ impl ConverterTask {
                 self.hq_accumulator.clear();
                 self.lq_accumulator.clear();
                 self.frame_counter = 0;
-                self.segment_index += 1;
+                self.segment_index = (self.segment_index + 1) % 100_000_000;
             }
         }
     }
