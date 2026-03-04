@@ -58,22 +58,21 @@ async fn sse_handler(
         Err(_) => Ok(Event::default().event("error").data("stream skipped")),
     });
 
-    // We can also create a keep-alive stream that ticks every 5s
+    // We can also create a keep-alive stream that ticks periodically
     let _keepalive_stream = tokio_stream::wrappers::IntervalStream::new(
-        tokio::time::interval(std::time::Duration::from_secs(5))
+        tokio::time::interval(std::time::Duration::from_secs(30))
     ).map(|_| {
         Ok::<Event, Infallible>(Event::default().event("ping").data("keepalive"))
     });
 
     // To merge them we could use `tokio_stream::StreamExt::merge` but let's stick to the ping via axum::response::sse::KeepAlive if needed,
     // or manually merging streams. For simplicity, we can spawn a background task pushing metrics to sse_tx directly
-    // or just return the broadcast stream as SSE. The requirement asks to include an Event::default().event("ping").data("keepalive") every 5 seconds.
-    // Instead of complex merge, we'll let Axum's Sse keep_alive handle it.
+    // or just return the broadcast stream as SSE.
 
     // Axum Sse has built in keepalive
     Sse::new(mapped_stream).keep_alive(
         axum::response::sse::KeepAlive::new()
-            .interval(std::time::Duration::from_secs(5))
+            .interval(std::time::Duration::from_secs(30))
             .text("keepalive")
     )
 }
@@ -82,7 +81,7 @@ async fn local_segment(
     Path(id): Path<u64>,
     State(state): State<Arc<AppState>>,
 ) -> Result<Response, StatusCode> {
-    let segments = state.local_segments.lock().unwrap();
+    let segments = state.local_segments.lock().unwrap_or_else(|e| e.into_inner());
 
     // Find the segment with index == id
     let hq_bytes = segments.iter().find(|(index, _)| *index == id).map(|(_, bytes)| bytes.clone());
@@ -90,7 +89,7 @@ async fn local_segment(
     if let Some(audio_bytes) = hq_bytes {
         // Prepend FLAC header
         let header = {
-            let lock = state.flac_header.lock().unwrap();
+            let lock = state.flac_header.lock().unwrap_or_else(|e| e.into_inner());
             lock.clone().unwrap_or_else(|| Bytes::from(vec![]))
         };
 

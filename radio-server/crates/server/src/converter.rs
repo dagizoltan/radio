@@ -28,7 +28,7 @@ impl ConverterTask {
         // Ensure HQ header is written to state immediately
         let header = hq_encoder.stream_header();
         {
-            let mut state_header = state.flac_header.lock().unwrap();
+            let mut state_header = state.flac_header.lock().unwrap_or_else(|e| e.into_inner());
             *state_header = Some(Bytes::from(header));
         }
 

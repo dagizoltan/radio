@@ -69,7 +69,7 @@ impl RecorderTask {
                 let filepath = self.local_archive_dir.join(&filename);
 
                 {
-                    let mut rp = self.state.recording_path.lock().unwrap();
+                    let mut rp = self.state.recording_path.lock().unwrap_or_else(|e| e.into_inner());
                     *rp = filepath.to_string_lossy().to_string();
                 }
 

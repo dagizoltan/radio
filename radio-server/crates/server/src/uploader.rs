@@ -126,21 +126,21 @@ impl UploaderTask {
                 .header("Authorization", auth_header);
 
             if let Ok(resp) = req.send().await {
-                if let Ok(xml) = resp.text().await {
-                    // Quick and dirty regex-like extraction of keys
-                    let parts: Vec<&str> = xml.split("<Key>").collect();
-                    for p in parts.iter().skip(1) {
-                        if let Some(key_end) = p.find("</Key>") {
-                            let key = &p[..key_end];
-                            // Parse index from "live/hq/segment-123.flac"
-                            if let Some(idx_str) = key.strip_prefix(prefix).and_then(|s| s.strip_prefix("segment-")).and_then(|s| s.strip_suffix(".flac")) {
-                                if let Ok(idx) = idx_str.parse::<u64>() {
-                                    if idx < max_index {
-                                        // Issue DELETE
-                                        // This requires another signed request, but for brevity we'll just log it in this "background" task
-                                        // Since we already have the `delete_s3_segment` logic, we could ideally call it but we don't have `&self` here.
-                                        println!("Would delete old S3 segment: {}", key);
-                                        // Self::delete_s3_segment_static(...) could be implemented if we refactor.
+                if let Ok(xml_str) = resp.text().await {
+                    if let Ok(doc) = roxmltree::Document::parse(&xml_str) {
+                        for node in doc.descendants() {
+                            if node.has_tag_name("Key") {
+                                if let Some(key) = node.text() {
+                                    // Parse index from "live/hq/segment-123.flac"
+                                    if let Some(idx_str) = key.strip_prefix(prefix)
+                                        .and_then(|s| s.strip_prefix("segment-"))
+                                        .and_then(|s| s.strip_suffix(".flac"))
+                                    {
+                                        if let Ok(idx) = idx_str.parse::<u64>() {
+                                            if idx < max_index {
+                                                println!("Would delete old S3 segment: {}", key);
+                                            }
+                                        }
                                     }
                                 }
                             }
@@ -177,7 +177,7 @@ impl UploaderTask {
             self.state.r2_uploading.store(true, Ordering::SeqCst);
 
             let hq_header = {
-                let lock = self.state.flac_header.lock().unwrap();
+                let lock = self.state.flac_header.lock().unwrap_or_else(|e| e.into_inner());
                 lock.clone().unwrap_or_else(|| Bytes::from(vec![]))
             };
 
@@ -236,7 +236,7 @@ impl UploaderTask {
 
             // Local Playback Queue
             {
-                let mut local_segments = self.state.local_segments.lock().unwrap();
+                let mut local_segments = self.state.local_segments.lock().unwrap_or_else(|e| e.into_inner());
                 local_segments.push_back((index, hq_bytes));
                 if local_segments.len() > 3 {
                     local_segments.pop_front();

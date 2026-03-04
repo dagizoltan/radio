@@ -11,6 +11,8 @@ let currentIndex = 0;
 let latestIndex = 0;
 let bufferTarget = 2; // Default pre-roll: latest - 2
 let segmentLengthSec = 5;
+let bandwidthEma = null; // Exponential Moving Average of bandwidth
+const EMA_ALPHA = 0.3; // Weight of the new measurement (0.0 to 1.0)
 
 // Buffer Pool for Zero-Copy transfers
 const pool = [];
@@ -74,7 +76,7 @@ async function pollManifest() {
         const res = await fetch('/api/manifest');
         if (res.ok) {
             const manifest = await res.json();
-            latestIndex = manifest.latest_sequence;
+            latestIndex = manifest.latest_sequence || manifest.latest;
 
             // Initial sync or jump-ahead if too far behind
             if (currentIndex === 0 || currentIndex < latestIndex - 6) {
@@ -140,10 +142,20 @@ async function fetchNextSegment() {
         if (time_taken_ms > 0) {
             const bandwidth_bps = (bytes_downloaded * 8) / (time_taken_ms / 1000);
 
-            // Adjust pre-roll target based on bandwidth
-            if (quality === 'hq' && bandwidth_bps < 1500000) {
+            // Calculate Exponential Moving Average
+            if (bandwidthEma === null) {
+                bandwidthEma = bandwidth_bps;
+            } else {
+                bandwidthEma = (EMA_ALPHA * bandwidth_bps) + ((1 - EMA_ALPHA) * bandwidthEma);
+            }
+
+            // Report metrics for monitoring
+            postMessage({ type: 'METRICS', bandwidth_bps: bandwidthEma, time_taken_ms });
+
+            // Adjust pre-roll target based on bandwidth EMA
+            if (quality === 'hq' && bandwidthEma < 1500000) {
                 bufferTarget = 4;
-            } else if (quality === 'lq' && bandwidth_bps < 800000) {
+            } else if (quality === 'lq' && bandwidthEma < 800000) {
                 bufferTarget = 4;
             } else {
                 bufferTarget = 2; // Default
@@ -151,7 +163,17 @@ async function fetchNextSegment() {
         }
 
         // Decode using WASM
-        const pcm = decoder.decode(new Uint8Array(arrayBuffer));
+        let pcm;
+        try {
+            pcm = decoder.decode(new Uint8Array(arrayBuffer));
+        } catch (decodeErr) {
+            console.error(`Error decoding segment ${currentIndex}:`, decodeErr);
+            currentIndex++;
+            const fetchDuration = endTime - startTime;
+            const timeToWait = Math.max(0, (segmentLengthSec * 1000) - fetchDuration - 500);
+            setTimeout(fetchNextSegment, timeToWait);
+            return;
+        }
 
         // Zero-Copy Buffer Pool Transfer
         if (pcm.length > 0 && workletPort) {
