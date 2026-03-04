@@ -27,6 +27,7 @@ WORKDIR /app
 # Install runtime dependencies
 RUN apt-get update && apt-get install -y \
     libasound2 \
+    ca-certificates \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy the binary from the builder

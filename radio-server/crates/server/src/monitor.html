@@ -1,19 +1,59 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Radio Monitor</title>
     <style>
-        body { font-family: monospace; background: #111; color: #eee; padding: 20px; }
-        .vu { display: inline-block; width: 200px; height: 20px; background: #333; margin-right: 10px; }
-        .vu-inner { height: 100%; background: #0f0; transition: width 0.1s; }
-        .controls { margin-top: 20px; }
-        button { padding: 10px; background: #444; color: white; border: none; cursor: pointer; }
-        button:hover { background: #555; }
-        #logs { margin-top: 20px; height: 300px; overflow-y: auto; background: #222; padding: 10px; border: 1px solid #444; }
+        body {
+            font-family: monospace;
+            background: #111;
+            color: #eee;
+            padding: 20px;
+        }
+
+        .vu {
+            display: inline-block;
+            width: 200px;
+            height: 20px;
+            background: #333;
+            margin-right: 10px;
+        }
+
+        .vu-inner {
+            height: 100%;
+            background: #0f0;
+            transition: width 0.1s;
+        }
+
+        .controls {
+            margin-top: 20px;
+        }
+
+        button {
+            padding: 10px;
+            background: #444;
+            color: white;
+            border: none;
+            cursor: pointer;
+        }
+
+        button:hover {
+            background: #555;
+        }
+
+        #logs {
+            margin-top: 20px;
+            height: 300px;
+            overflow-y: auto;
+            background: #222;
+            padding: 10px;
+            border: 1px solid #444;
+        }
     </style>
 </head>
+
 <body>
     <h1>Radio Monitor</h1>
     <div>
@@ -21,14 +61,30 @@
     </div>
     <div>
         <label>Left VU: </label>
-        <div class="vu"><div id="vu-left" class="vu-inner" style="width: 0%"></div></div>
+        <div class="vu">
+            <div id="vu-left" class="vu-inner" style="width: 0%"></div>
+        </div>
     </div>
     <div>
         <label>Right VU:</label>
-        <div class="vu"><div id="vu-right" class="vu-inner" style="width: 0%"></div></div>
+        <div class="vu">
+            <div id="vu-right" class="vu-inner" style="width: 0%"></div>
+        </div>
     </div>
     <div>
         <label>R2 Segment:</label> <span id="r2-segment">0</span>
+    </div>
+
+    <div class="controls">
+        <label>Device:</label>
+        <select id="device-select" onchange="saveSettings()"></select>
+
+        <label style="margin-left: 20px;">Channels:</label>
+        <select id="channel-select" onchange="saveSettings()">
+            <option value="stereo">Stereo</option>
+            <option value="left">Mono (Left)</option>
+            <option value="right">Mono (Right)</option>
+        </select>
     </div>
 
     <div class="controls">
@@ -42,14 +98,49 @@
         const evtSource = new EventSource("/events");
         const logs = document.getElementById('logs');
 
+        async function loadDevices() {
+            try {
+                const res = await fetch('/devices');
+                const devices = await res.json();
+                const select = document.getElementById('device-select');
+                select.innerHTML = '';
+                devices.forEach(d => {
+                    const opt = document.createElement('option');
+                    opt.value = d.id;
+                    opt.textContent = d.label;
+                    select.appendChild(opt);
+                });
+            } catch (err) {
+                console.error("Failed to load devices", err);
+            }
+        }
+
+        async function saveSettings() {
+            const device = document.getElementById('device-select').value;
+            const channel = document.getElementById('channel-select').value;
+
+            try {
+                await fetch('/settings', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ device, channel })
+                });
+            } catch (err) {
+                console.error("Failed to save settings", err);
+            }
+        }
+
         function log(msg) {
             const div = document.createElement('div');
             div.textContent = `[${new Date().toISOString()}] ${msg}`;
+            if (msg.includes('"error":true')) {
+                div.style.color = '#ff6666';
+            }
             logs.appendChild(div);
             logs.scrollTop = logs.scrollHeight;
         }
 
-        evtSource.onmessage = function(e) {
+        evtSource.onmessage = function (e) {
             try {
                 if (e.data === "keepalive") return;
                 const data = JSON.parse(e.data);
@@ -67,12 +158,16 @@
 
                     document.getElementById('r2-segment').textContent = data.r2_segment;
                 } else if (data.type === "log" || data.error) {
-                    log(JSON.stringify(data));
+                    if (data.message) {
+                        log(data.error ? "ERROR: " + data.message : data.message);
+                    } else {
+                        log(JSON.stringify(data));
+                    }
                 }
-            } catch (err) {}
+            } catch (err) { }
         };
 
-        evtSource.addEventListener("ping", function(e) {
+        evtSource.addEventListener("ping", function (e) {
             // Keepalive
         });
 
@@ -83,6 +178,10 @@
         async function stopStream() {
             await fetch('/stop', { method: 'POST' });
         }
+
+        // Initialize
+        loadDevices();
     </script>
 </body>
+
 </html>

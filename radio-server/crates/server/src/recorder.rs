@@ -3,7 +3,7 @@ use tokio::sync::mpsc;
 use crate::state::AppState;
 use capture::capture::CaptureLoop;
 use capture::device::Device;
-use capture::discovery::discover_device;
+
 use encoder::flac::FlacEncoder;
 use std::fs::File;
 use std::io::Write;
@@ -34,19 +34,9 @@ impl RecorderTask {
     }
 
     pub async fn run(self) -> std::io::Result<()> {
-        let device_path = discover_device();
-        println!("Opening capture device: {}", device_path);
-
-        // Implement Mock Logic to prevent panic on docker dev machines
-        let is_mock = device_path == "mock_device";
-        let mut capture_loop = None;
-
-        if !is_mock {
-            let device = Device::open(&device_path);
-            device.prepare();
-            capture_loop = Some(CaptureLoop::new(device.raw_fd())?);
-        }
-
+        let mut capture_loop: Option<CaptureLoop> = None;
+        let mut current_device_path = String::new();
+        
         // For local archive file
         let mut archive_file: Option<File> = None;
         let archive_encoder = FlacEncoder::new(48000, 2, 24, 4096);
@@ -54,9 +44,63 @@ impl RecorderTask {
         let mut file_frame_number = 0u64;
         let frames_per_hour = 48000 * 60 * 60; // 172,800,000 frames
 
-        self.state.streaming.store(true, Ordering::SeqCst);
-
         loop {
+            if self.token.is_cancelled() {
+                break Ok(());
+            }
+
+            // Check current desired state
+            let desired_device = { self.state.selected_device.lock().unwrap().clone() };
+            let should_stream = self.state.streaming.load(Ordering::SeqCst);
+            
+            // Reconfigure if device changed or we stopped streaming
+            if !should_stream || desired_device != current_device_path {
+                if capture_loop.is_some() {
+                    let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Closing capture device: {}"}}"#, current_device_path));
+                    capture_loop = None;
+                    current_device_path = String::new();
+                }
+            }
+
+            if should_stream && capture_loop.is_none() {
+                // Try to open
+                let is_mock = desired_device == "mock_device";
+                let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Opening capture device: {}"}}"#, desired_device));
+
+                if is_mock {
+                    current_device_path = desired_device;
+                    // capture_loop remains None for mock
+                } else {
+                    match Device::open(&desired_device) {
+                        Ok(device) => {
+                            device.prepare();
+                            match CaptureLoop::new(device.raw_fd()) {
+                                Ok(cl) => {
+                                    capture_loop = Some(cl);
+                                    current_device_path = desired_device;
+                                    let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Success opening {}"}}"#, current_device_path));
+                                },
+                                Err(e) => {
+                                    let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","error":true,"message":"CaptureLoop error: {}"}}"#, e));
+                                    tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                                    continue;
+                                }
+                            }
+                        },
+                        Err(e) => {
+                            let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","error":true,"message":"Device open error: {}"}}"#, e));
+                            tokio::time::sleep(tokio::time::Duration::from_secs(2)).await;
+                            continue;
+                        }
+                    }
+                }
+            }
+            
+            if !should_stream {
+                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
+                continue;
+            }
+
             // Need a rotation?
             if archive_file.is_none() || frames_in_file >= frames_per_hour {
                 if let Some(file) = archive_file.take() {
@@ -83,17 +127,20 @@ impl RecorderTask {
             }
 
             // Wait for ALSA readable event, or generate mock silence
-            let (pcm_data, overrun) = if let Some(loop_ref) = &capture_loop {
+            let (mut pcm_data, overrun) = if let Some(loop_ref) = &capture_loop {
                 match loop_ref.read_period().await {
                     Ok(res) => res,
                     Err(e) => {
                         let errno = e.raw_os_error().unwrap_or(0);
                         if errno == libc::ENODEV {
-                            eprintln!("RecorderTask: Device disconnected (ENODEV). Initiating shutdown.");
-                            self.token.cancel();
-                            return Err(e);
+                            let _ = self.state.sse_tx.send(r#"{"type":"log","error":true,"message":"Device disconnected (ENODEV)"}"#.to_string());
+                            capture_loop = None;
+                            current_device_path = String::new(); // force reopen
+                            continue;
                         } else {
-                            return Err(e);
+                            let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","error":true,"message":"ALSA read err: {}"}}"#, e));
+                            tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            continue;
                         }
                     }
                 }
@@ -106,8 +153,22 @@ impl RecorderTask {
 
             if overrun {
                 self.state.overruns.fetch_add(1, Ordering::Relaxed);
+                let _ = self.state.sse_tx.send(r#"{"type":"log","error":true,"message":"Buffer overrun (XRUN)"}"#.to_string());
             }
+            
             let frames_read = pcm_data.len() / 2;
+            
+            // Channel routing
+            let desired_channel = { self.state.selected_channel.lock().unwrap().clone() };
+            if desired_channel == "left" {
+                for i in (0..pcm_data.len()).step_by(2) {
+                    pcm_data[i+1] = pcm_data[i];
+                }
+            } else if desired_channel == "right" {
+                for i in (0..pcm_data.len()).step_by(2) {
+                    pcm_data[i] = pcm_data[i+1];
+                }
+            }
 
             // Calculate VU values
             let mut max_l = 0;

@@ -2,7 +2,7 @@ use axum::{
     extract::{Path, State},
     response::{sse::{Event, Sse}, Html, Response},
     routing::{get, post},
-    Router,
+    Router, Json,
 };
 use bytes::Bytes;
 use reqwest::StatusCode;
@@ -10,6 +10,8 @@ use std::{convert::Infallible, sync::Arc};
 use tokio_stream::{Stream, StreamExt};
 use tower_http::cors::{Any, CorsLayer};
 use crate::state::AppState;
+use capture::discovery::get_available_devices;
+use serde::{Deserialize, Serialize};
 
 use tokio_util::sync::CancellationToken;
 
@@ -26,6 +28,8 @@ pub async fn run_server(state: Arc<AppState>, token: CancellationToken) {
         .route("/start", post(start_stream))
         .route("/stop", post(stop_stream))
         .route("/metrics", get(metrics_handler))
+        .route("/devices", get(list_devices))
+        .route("/settings", post(update_settings))
         .layer(cors)
         .with_state(state);
 
@@ -130,4 +134,44 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> String {
         overruns,
         put_latency
     )
+}
+
+#[derive(Serialize)]
+struct DeviceDesc {
+    id: String,
+    label: String,
+}
+
+async fn list_devices() -> Json<Vec<DeviceDesc>> {
+    let devices = get_available_devices()
+        .into_iter()
+        .map(|(id, label)| DeviceDesc { id, label })
+        .collect();
+    Json(devices)
+}
+
+#[derive(Deserialize)]
+struct SettingsPayload {
+    device: String,
+    channel: String, // "stereo", "left", "right"
+}
+
+async fn update_settings(
+    State(state): State<Arc<AppState>>,
+    Json(payload): Json<SettingsPayload>,
+) -> StatusCode {
+    {
+        let mut dev = state.selected_device.lock().unwrap();
+        *dev = payload.device;
+    }
+    {
+        let mut ch = state.selected_channel.lock().unwrap();
+        *ch = payload.channel;
+    }
+    let _ = state.sse_tx.send(r#"{"type":"log","message":"Settings updated"}"#.to_string());
+    
+    // Stop the stream momentarily. The recorder loop will pick up the device changes.
+    // Let's just update the settings, and let the user Start Stream again.
+    
+    StatusCode::OK
 }

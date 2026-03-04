@@ -58,11 +58,21 @@ impl Default for SndrPcmHwParams {
 }
 
 #[repr(C)]
-#[derive(Debug, Clone, Copy, Default)]
+#[derive(Debug, Clone, Copy)]
 pub struct SndrPcmXferi {
     pub result: i64,
     pub buf: *mut i32,
     pub frames: u64,
+}
+
+impl Default for SndrPcmXferi {
+    fn default() -> Self {
+        SndrPcmXferi {
+            result: 0,
+            buf: std::ptr::null_mut(),
+            frames: 0,
+        }
+    }
 }
 
 // ioctl constants
@@ -90,5 +100,7 @@ pub const SNDRV_PCM_HW_PARAM_BUFFER_BYTES: usize = 18;
 pub const SNDRV_PCM_HW_PARAM_TICK_TIME: usize = 19;
 
 // Specific formats and access
+pub const SNDRV_PCM_FORMAT_S16_LE: u32 = 2;
 pub const SNDRV_PCM_FORMAT_S24_LE: u32 = 6;
+pub const SNDRV_PCM_FORMAT_S32_LE: u32 = 10;
 pub const SNDRV_PCM_ACCESS_RW_INTERLEAVED: u32 = 3;

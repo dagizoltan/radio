@@ -5,4 +5,4 @@ pub mod discovery;
 
 pub use capture::CaptureLoop;
 pub use device::Device;
-pub use discovery::discover_device;
+pub use discovery::get_available_devices;

@@ -17,6 +17,8 @@ pub struct AppState {
     pub flac_header: Mutex<Option<Bytes>>,
     pub sse_tx: broadcast::Sender<String>,
     pub overruns: AtomicU64,
+    pub selected_device: Mutex<String>,
+    pub selected_channel: Mutex<String>,
 }
 
 impl AppState {
@@ -35,6 +37,8 @@ impl AppState {
             flac_header: Mutex::new(None),
             sse_tx,
             overruns: AtomicU64::new(0),
+            selected_device: Mutex::new("mock_device".to_string()),
+            selected_channel: Mutex::new("stereo".to_string()),
         }
     }
 }

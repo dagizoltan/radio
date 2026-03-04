@@ -257,6 +257,7 @@ impl UploaderTask {
                 tokio::time::sleep(Duration::from_millis(500 * (1 << (attempt - 1)))).await;
             }
             if let Ok(true) = self.put_s3(&uri, body.clone(), content_type, "public, max-age=31536000, immutable").await {
+                let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Uploaded {uri} ({} bytes)"}}"#, body.len()));
                 return true;
             }
         }
