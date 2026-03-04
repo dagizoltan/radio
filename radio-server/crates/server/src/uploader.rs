@@ -21,6 +21,7 @@ struct Manifest {
     live: bool,
     latest: u64,
     segment_s: f64,
+    updated_at: u64,
     qualities: Vec<&'static str>,
 }
 
@@ -211,6 +212,7 @@ impl UploaderTask {
                 live: true,
                 latest: index,
                 segment_s: 10.24,
+                updated_at: std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_millis() as u64,
                 qualities: vec!["hq", "lq"],
             };
             let manifest_json = serde_json::to_vec(&manifest).unwrap();

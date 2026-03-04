@@ -106,6 +106,12 @@ class RadioPlayer extends HTMLElement {
                 console.log("Worker initialized");
             } else if (e.data.type === 'TOKEN_UPDATED') {
                 this.token = e.data.token;
+            } else if (e.data.type === 'STALE_MANIFEST') {
+                if (e.data.isStale && this.audioCtx && this.audioCtx.state === 'running') {
+                    this.statusDiv.textContent = 'Stream may be offline';
+                } else if (!e.data.isStale && this.audioCtx && this.audioCtx.state === 'running' && this.statusDiv.textContent === 'Stream may be offline') {
+                    this.statusDiv.textContent = 'Playing...';
+                }
             }
         };
 
