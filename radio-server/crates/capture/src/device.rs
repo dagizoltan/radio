@@ -9,7 +9,7 @@ pub struct Device {
 }
 
 impl Device {
-    pub fn open(path: &str) -> Self {
+    pub fn open(path: &str, channels: u32) -> Self {
         let file = OpenOptions::new()
             .read(true)
             .write(true)
@@ -52,7 +52,7 @@ impl Device {
         };
 
         set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_RATE, 48000);
-        set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_CHANNELS, 2);
+        set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_CHANNELS, channels);
         set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, 4096);
         set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIODS, 4);
 
