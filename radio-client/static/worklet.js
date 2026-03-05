@@ -64,8 +64,12 @@ class RadioProcessor extends AudioWorkletProcessor {
 
         // Zero-Allocation Demux
         for (let i = 0; i < 128; i++) {
-            channelLeft[i] = this.ringBuffer[(this.readPointer + i * 2) % this.RING_BUFFER_SIZE] * this.volume;
-            channelRight[i] = this.ringBuffer[(this.readPointer + i * 2 + 1) % this.RING_BUFFER_SIZE] * this.volume;
+            if (channelLeft) {
+                channelLeft[i] = this.ringBuffer[(this.readPointer + i * 2) % this.RING_BUFFER_SIZE] * this.volume;
+            }
+            if (channelRight) {
+                channelRight[i] = this.ringBuffer[(this.readPointer + i * 2 + 1) % this.RING_BUFFER_SIZE] * this.volume;
+            }
         }
 
         this.readPointer = (this.readPointer + 256) % this.RING_BUFFER_SIZE;

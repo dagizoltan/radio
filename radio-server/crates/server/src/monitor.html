@@ -13,7 +13,7 @@
         :root {
             --bg: #05070a;
             --accent: #6366f1;
-            --accent-glow: rgba(99, 102, 241, 0.4);
+            --accent-glow: rgba(99, 102, 241, 0.2);
             --surface: rgba(255, 255, 255, 0.03);
             --surface-hover: rgba(255, 255, 255, 0.06);
             --border: rgba(255, 255, 255, 0.08);
@@ -22,7 +22,7 @@
             --green: #22c55e;
             --yellow: #eab308;
             --red: #ef4444;
-            --glass: rgba(15, 23, 42, 0.6);
+            --glass: rgba(10, 15, 25, 0.4);
         }
 
         * {
@@ -34,9 +34,6 @@
         body {
             font-family: 'Outfit', sans-serif;
             background: var(--bg);
-            background-image:
-                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
-                radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.1) 0px, transparent 50%);
             color: var(--text);
             min-height: 100vh;
             overflow-x: hidden;
@@ -89,7 +86,7 @@
             align-items: center;
             gap: 10px;
             padding: 8px 16px;
-            border-radius: 50px;
+            border-radius: 8px;
             font-size: 0.75rem;
             font-weight: 600;
             letter-spacing: 0.1em;
@@ -144,7 +141,7 @@
             background: var(--glass);
             backdrop-filter: blur(16px);
             border: 1px solid var(--border);
-            border-radius: 24px;
+            border-radius: 8px;
             padding: 24px;
             box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
             position: relative;
@@ -388,7 +385,7 @@
         .metric-box {
             padding: 16px;
             background: rgba(0, 0, 0, 0.2);
-            border-radius: 16px;
+            border-radius: 8px;
             border: 1px solid var(--border);
         }
 
@@ -561,6 +558,14 @@
             <div class="card-header"><span class="card-label">System Telemetry</span></div>
             <div class="metrics-grid">
                 <div class="metric-box">
+                    <div class="card-label">Recording Time</div>
+                    <div id="m-time" class="metric-value">00:00</div>
+                </div>
+                <div class="metric-box">
+                    <div class="card-label">Current File</div>
+                    <div id="m-file" class="metric-value" style="font-size: 0.9rem; word-break: break-all;">-</div>
+                </div>
+                <div class="metric-box">
                     <div class="card-label">Active segment</div>
                     <div id="m-segment" class="metric-value">0</div>
                 </div>
@@ -682,6 +687,21 @@
                 const streamBadge = document.getElementById('streaming-badge');
                 streamBadge.className = 'status-pill' + (data.streaming ? ' live' : '');
                 document.getElementById('streaming-label').textContent = data.streaming ? 'LIVE' : 'OFFLINE';
+
+                let timeStr = "00:00";
+                if (data.recording_start && data.streaming) {
+                    let elapsed = Math.max(0, Math.floor(Date.now() / 1000 - data.recording_start));
+                    let mins = Math.floor(elapsed / 60).toString().padStart(2, '0');
+                    let secs = (elapsed % 60).toString().padStart(2, '0');
+                    timeStr = `${mins}:${secs}`;
+                }
+                document.getElementById('m-time').textContent = timeStr;
+
+                let fileName = "-";
+                if (data.recording_path) {
+                    fileName = data.recording_path.split('/').pop() || '-';
+                }
+                document.getElementById('m-file').textContent = fileName;
 
                 document.getElementById('m-segment').textContent = data.r2_segment;
                 document.getElementById('m-size').textContent = (data.recording_bytes / 1024 / 1024).toFixed(1) + ' MB';

@@ -349,7 +349,9 @@ class RadioPlayer extends HTMLElement {
 
             try {
                 await this.audioCtx.audioWorklet.addModule('/static/worklet.js');
-                this.workletNode = new AudioWorkletNode(this.audioCtx, 'radio-processor');
+                this.workletNode = new AudioWorkletNode(this.audioCtx, 'radio-processor', {
+                    outputChannelCount: [2]
+                });
                 this.workletNode.connect(this.analyser);
 
                 const channel = new MessageChannel();

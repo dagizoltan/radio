@@ -229,6 +229,9 @@ impl RecorderTask {
                     *rp = filepath.to_string_lossy().to_string();
                 }
 
+                self.state.recording_start.store(ts, Ordering::Relaxed);
+                self.state.recording_bytes.store(0, Ordering::Relaxed);
+
                 let mut new_file = File::create(&filepath)?;
                 let header = archive_encoder.stream_header();
                 new_file.write_all(&header)?;

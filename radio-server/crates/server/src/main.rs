@@ -63,6 +63,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             let overruns  = metrics_state.overruns.load(std::sync::atomic::Ordering::Relaxed);
             let uploading = metrics_state.r2_uploading.load(std::sync::atomic::Ordering::Relaxed);
             let rec_bytes = metrics_state.recording_bytes.load(std::sync::atomic::Ordering::Relaxed);
+            let rec_start = metrics_state.recording_start.load(std::sync::atomic::Ordering::Relaxed);
             let rec_path  = metrics_state.recording_path.lock()
                 .unwrap_or_else(|e| e.into_inner()).clone();
             
@@ -72,7 +73,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             };
 
             let msg = format!(
-                r#"{{"type":"metrics","streaming":{streaming},"vu_left":{vu_left},"vu_right":{vu_right},"stream_vu_left":{stream_vu_left},"stream_vu_right":{stream_vu_right},"r2_segment":{r2_seg},"overruns":{overruns},"uploading":{uploading},"recording_bytes":{rec_bytes},"recording_path":"{rec_path}","waveform":{wf}}}"#
+                r#"{{"type":"metrics","streaming":{streaming},"vu_left":{vu_left},"vu_right":{vu_right},"stream_vu_left":{stream_vu_left},"stream_vu_right":{stream_vu_right},"r2_segment":{r2_seg},"overruns":{overruns},"uploading":{uploading},"recording_bytes":{rec_bytes},"recording_start":{rec_start},"recording_path":"{rec_path}","waveform":{wf}}}"#
             );
             let _ = metrics_state.sse_tx.send(msg);
         }
