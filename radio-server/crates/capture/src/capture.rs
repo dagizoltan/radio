@@ -7,28 +7,30 @@ pub struct CaptureLoop {
     async_fd: AsyncFd<RawFd>,
     channels: u32,
     format: u32,
+    period_size: u32,
 }
 
 impl CaptureLoop {
-    pub fn new(fd: RawFd, channels: u32, format: u32) -> std::io::Result<Self> {
+    pub fn new(fd: RawFd, channels: u32, format: u32, period_size: u32) -> std::io::Result<Self> {
         let async_fd = AsyncFd::new(fd)?;
-        Ok(CaptureLoop { async_fd, channels, format })
+        Ok(CaptureLoop { async_fd, channels, format, period_size })
     }
 
     pub async fn read_period(&self) -> std::io::Result<(Vec<i32>, bool)> {
         loop {
             let mut guard = self.async_fd.readable().await?;
 
+            let frames_to_read = self.period_size as usize;
             let samples_per_frame = self.channels as usize;
-            let total_samples = 4096 * samples_per_frame;
+            let total_samples = frames_to_read * samples_per_frame;
 
-            let is_3byte = self.format == SNDRV_PCM_FORMAT_S24_3LE;
+            let _is_3byte = self.format == SNDRV_PCM_FORMAT_S24_3LE;
             let mut raw_buffer = vec![0u32; total_samples];
 
             let mut xferi = SndrPcmXferi {
                 result: 0,
                 buf: raw_buffer.as_mut_ptr() as *mut i32,
-                frames: 4096,
+                frames: self.period_size as u64,
             };
 
             let ret = unsafe {

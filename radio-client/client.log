@@ -1,6 +1,0 @@
-[0m[32mDownload[0m https://registry.npmjs.org/hono/-/hono-4.0.0.tgz
-[0m[32mDownload[0m https://registry.npmjs.org/hono
-Listening on http://0.0.0.0:3000/ (http://localhost:3000/)
-Failed to fetch manifest or token during SSR: Error: Bad R2 Response: 404
-    at Array.<anonymous> (file:///app/radio-client/main.js:88:13)
-    at async mapped (ext:deno_http/00_serve.ts:360:18)

@@ -75,7 +75,7 @@ impl RecorderTask {
                     match Device::open(&desired_device) {
                         Ok(device) => {
                             device.prepare();
-                            match CaptureLoop::new(device.raw_fd(), device.channels(), device.format()) {
+                            match CaptureLoop::new(device.raw_fd(), device.channels(), device.format(), device.period_size()) {
                                 Ok(cl) => {
                                     capture_loop = Some(cl);
                                     current_device_path = desired_device;
