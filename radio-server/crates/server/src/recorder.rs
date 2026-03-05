@@ -43,6 +43,8 @@ impl RecorderTask {
         let mut frames_in_file = 0u64;
         let mut file_frame_number = 0u64;
         let frames_per_hour = 48000 * 60 * 60; // 172,800,000 frames
+
+        let mut mock_phase_frames: u64 = 0;
         let mut last_debug_log = std::time::Instant::now();
 
         loop {
@@ -124,7 +126,7 @@ impl RecorderTask {
                 let sample_rate = 48000.0;
                 let freq = 440.0;
                 let lfo_freq = 2.0;
-                let mut time_val = (frames_in_file as f64) / sample_rate;
+                let mut time_val = (mock_phase_frames as f64) / sample_rate;
                 let base_amplitude = 838860.0; // Moderate amplitude for 24-bit range
 
                 for i in 0..4096 {
@@ -134,6 +136,7 @@ impl RecorderTask {
                     mock_data[i * 2 + 1] = val as i32; // Right
                     time_val += 1.0 / sample_rate;
                 }
+                mock_phase_frames += 4096;
 
                 (mock_data, false)
             };
