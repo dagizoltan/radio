@@ -285,10 +285,31 @@
 
         .vu-container {
             display: flex;
-            gap: 16px;
+            gap: 24px;
             flex: 1;
             padding-top: 10px;
             justify-content: center;
+        }
+
+        .vu-section {
+            display: flex;
+            gap: 8px;
+            padding: 0 10px;
+            border-right: 1px solid var(--border);
+        }
+
+        .vu-section:last-child {
+            border-right: none;
+        }
+
+        .vu-group-label {
+            font-size: 0.65rem;
+            color: var(--muted);
+            text-align: center;
+            margin-bottom: 8px;
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            width: 100%;
         }
 
         .vu-column {
@@ -433,21 +454,51 @@
         <div class="glass-card meters-panel">
             <div class="card-header"><span class="card-label">Levels</span></div>
             <div class="vu-container">
-                <div class="vu-column">
-                    <div class="vu-track">
-                        <div id="vu-l" class="vu-bar"></div>
-                        <div id="peak-l" class="vu-peak"></div>
+                <div class="vu-section">
+                    <div>
+                        <div class="vu-group-label">Input</div>
+                        <div style="display: flex; gap: 8px;">
+                            <div class="vu-column">
+                                <div class="vu-track">
+                                    <div id="vu-in-l" class="vu-bar"></div>
+                                    <div id="peak-in-l" class="vu-peak"></div>
+                                </div>
+                                <span class="db-label">L</span>
+                                <span id="db-in-l" class="db-label">-- dB</span>
+                            </div>
+                            <div class="vu-column">
+                                <div class="vu-track">
+                                    <div id="vu-in-r" class="vu-bar"></div>
+                                    <div id="peak-in-r" class="vu-peak"></div>
+                                </div>
+                                <span class="db-label">R</span>
+                                <span id="db-in-r" class="db-label">-- dB</span>
+                            </div>
+                        </div>
                     </div>
-                    <span class="db-label">L</span>
-                    <span id="db-l" class="db-label">-- dB</span>
                 </div>
-                <div class="vu-column">
-                    <div class="vu-track">
-                        <div id="vu-r" class="vu-bar"></div>
-                        <div id="peak-r" class="vu-peak"></div>
+                <div class="vu-section">
+                    <div>
+                        <div class="vu-group-label">Stream</div>
+                        <div style="display: flex; gap: 8px;">
+                            <div class="vu-column">
+                                <div class="vu-track">
+                                    <div id="vu-str-l" class="vu-bar" style="background: linear-gradient(to top, #6366f1, #a855f7);"></div>
+                                    <div id="peak-str-l" class="vu-peak"></div>
+                                </div>
+                                <span class="db-label">L</span>
+                                <span id="db-str-l" class="db-label">-- dB</span>
+                            </div>
+                            <div class="vu-column">
+                                <div class="vu-track">
+                                    <div id="vu-str-r" class="vu-bar" style="background: linear-gradient(to top, #6366f1, #a855f7);"></div>
+                                    <div id="peak-str-r" class="vu-peak"></div>
+                                </div>
+                                <span class="db-label">R</span>
+                                <span id="db-str-r" class="db-label">-- dB</span>
+                            </div>
+                        </div>
                     </div>
-                    <span class="db-label">R</span>
-                    <span id="db-r" class="db-label">-- dB</span>
                 </div>
             </div>
         </div>
@@ -508,8 +559,9 @@
         const VU_MAX = 8388607;
         const DB_FLOOR = -48;
 
-        let peakL = -Infinity, peakR = -Infinity;
-        let peakTimerL, peakTimerR;
+        let peakInL = -Infinity, peakInR = -Infinity;
+        let peakStrL = -Infinity, peakStrR = -Infinity;
+        let pTimerInL, pTimerInR, pTimerStrL, pTimerStrR;
 
         function resizeCanvas() {
             canvas.width = canvas.offsetWidth * window.devicePixelRatio;
@@ -564,20 +616,35 @@
                 // Update Waveform
                 if (data.waveform) drawWaveform(data.waveform);
 
-                // Update Meters
-                const dbL = linearToDb(data.vu_left);
-                const dbR = linearToDb(data.vu_right);
+                // Update Input Meters
+                const dbInL = linearToDb(data.vu_left);
+                const dbInR = linearToDb(data.vu_right);
 
-                document.getElementById('vu-l').style.height = dbToPct(dbL) + '%';
-                document.getElementById('vu-r').style.height = dbToPct(dbR) + '%';
-                document.getElementById('db-l').textContent = (dbL > DB_FLOOR ? dbL.toFixed(1) : '-inf') + ' dB';
-                document.getElementById('db-r').textContent = (dbR > DB_FLOOR ? dbR.toFixed(1) : '-inf') + ' dB';
+                document.getElementById('vu-in-l').style.height = dbToPct(dbInL) + '%';
+                document.getElementById('vu-in-r').style.height = dbToPct(dbInR) + '%';
+                document.getElementById('db-in-l').textContent = (dbInL > DB_FLOOR ? dbInL.toFixed(1) : '-inf') + ' dB';
+                document.getElementById('db-in-r').textContent = (dbInR > DB_FLOOR ? dbInR.toFixed(1) : '-inf') + ' dB';
 
-                if (dbL > peakL) { peakL = dbL; clearTimeout(peakTimerL); peakTimerL = setTimeout(() => peakL = -Infinity, 2000); }
-                if (dbR > peakR) { peakR = dbR; clearTimeout(peakTimerR); peakTimerR = setTimeout(() => peakR = -Infinity, 2000); }
+                if (dbInL > peakInL) { peakInL = dbInL; clearTimeout(pTimerInL); pTimerInL = setTimeout(() => peakInL = -Infinity, 2000); }
+                if (dbInR > peakInR) { peakInR = dbInR; clearTimeout(pTimerInR); pTimerInR = setTimeout(() => peakInR = -Infinity, 2000); }
 
-                document.getElementById('peak-l').style.bottom = dbToPct(peakL) + '%';
-                document.getElementById('peak-r').style.bottom = dbToPct(peakR) + '%';
+                document.getElementById('peak-in-l').style.bottom = dbToPct(peakInL) + '%';
+                document.getElementById('peak-in-r').style.bottom = dbToPct(peakInR) + '%';
+
+                // Update Stream Meters
+                const dbStrL = linearToDb(data.stream_vu_left || 0);
+                const dbStrR = linearToDb(data.stream_vu_right || 0);
+
+                document.getElementById('vu-str-l').style.height = dbToPct(dbStrL) + '%';
+                document.getElementById('vu-str-r').style.height = dbToPct(dbStrR) + '%';
+                document.getElementById('db-str-l').textContent = (dbStrL > DB_FLOOR ? dbStrL.toFixed(1) : '-inf') + ' dB';
+                document.getElementById('db-str-r').textContent = (dbStrR > DB_FLOOR ? dbStrR.toFixed(1) : '-inf') + ' dB';
+
+                if (dbStrL > peakStrL) { peakStrL = dbStrL; clearTimeout(pTimerStrL); pTimerStrL = setTimeout(() => peakStrL = -Infinity, 2000); }
+                if (dbStrR > peakStrR) { peakStrR = dbStrR; clearTimeout(pTimerStrR); pTimerStrR = setTimeout(() => peakStrR = -Infinity, 2000); }
+
+                document.getElementById('peak-str-l').style.bottom = dbToPct(peakStrL) + '%';
+                document.getElementById('peak-str-r').style.bottom = dbToPct(peakStrR) + '%';
 
                 // Update UI State
                 const streamBadge = document.getElementById('streaming-badge');
