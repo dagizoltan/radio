@@ -44,11 +44,10 @@ impl Device {
         let mut final_hw_params = SndrPcmHwParams::default();
 
         for &fmt in &formats_to_try {
-            for &ch in &[2, 4] {
-                // To safely configure, let's first query with a loose range.
-                // However, `SNDRV_PCM_IOCTL_HW_PARAMS` forces parameters.
-                // UMC404HD prefers period_size around 1024 to 4096. Let's try 4096, 2048, 1024, 512
-                for &period_size in &[4096, 2048, 1024, 512] {
+            for &ch in &[4, 2, 8, 1] { // Prioritize 4 channels for UMC404HD, fallback to 2, 8, 1
+                // Behringer devices often demand very specific period sizes based on sample rate.
+                // We'll also try a wildcard buffer sizing if explicit period sizes fail.
+                for &period_size in &[4096, 2048, 1024, 512, 256, 128] {
                     let mut hw_params = SndrPcmHwParams::default();
 
                     // 1. Constrain ACCESS (Interleaved)
@@ -78,15 +77,11 @@ impl Device {
                     set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_CHANNELS, ch, ch);
                     set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, period_size, period_size);
 
-                    // We let PERIODS be a bit flexible, try setting buffer size instead.
-                    let buffer_size = period_size * 4;
-                    set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_BUFFER_SIZE, buffer_size, buffer_size);
-
-                    // Set rmask for intervals
+                    // Allow hardware to determine the best buffer size and periods by leaving their intervals open
+                    // Set rmask for intervals to strictly enforce RATE, CHANNELS, and PERIOD_SIZE
                     hw_params.rmask |= (1 << SNDRV_PCM_HW_PARAM_RATE) |
                                      (1 << SNDRV_PCM_HW_PARAM_CHANNELS) |
-                                     (1 << SNDRV_PCM_HW_PARAM_PERIOD_SIZE) |
-                                     (1 << SNDRV_PCM_HW_PARAM_BUFFER_SIZE);
+                                     (1 << SNDRV_PCM_HW_PARAM_PERIOD_SIZE);
 
                     let ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS as _, &mut hw_params) };
                     if ret >= 0 {
