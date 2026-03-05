@@ -118,8 +118,22 @@ impl RecorderTask {
             } else {
                 // Mock device loop: Wait ~85ms for 4096 samples at 48kHz
                 tokio::time::sleep(std::time::Duration::from_millis(85)).await;
-                let silence = vec![0i32; 8192]; // 4096 frames * 2 channels
-                (silence, false)
+
+                let mut mock_data = vec![0i32; 8192];
+                // Generate a 440 Hz sine wave
+                let sample_rate = 48000.0;
+                let freq = 440.0;
+                let mut time_val = (frames_in_file as f64) / sample_rate;
+                let amplitude = 838860.0; // Moderate amplitude for 24-bit range
+
+                for i in 0..4096 {
+                    let val = (time_val * freq * 2.0 * std::f64::consts::PI).sin() * amplitude;
+                    mock_data[i * 2] = val as i32;     // Left
+                    mock_data[i * 2 + 1] = val as i32; // Right
+                    time_val += 1.0 / sample_rate;
+                }
+
+                (mock_data, false)
             };
 
             if overrun {

@@ -108,6 +108,21 @@ app.get('/', async (c) => {
       <meta name="viewport" content="width=device-width, initial-scale=1.0">
       <title>Lossless Radio Player</title>
       <script type="module" src="/static/player.js"></script>
+      <style>
+        body {
+            font-family: 'Outfit', sans-serif;
+            background: #05070a;
+            background-image:
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.1) 0px, transparent 50%);
+            color: #f8fafc;
+            min-height: 100vh;
+            margin: 0;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+      </style>
     </head>
     <body>
       <radio-player data-token="${token}" data-live="${live}" data-r2-url="${r2BaseUrl}" data-events-url="${eventsUrl}"></radio-player>

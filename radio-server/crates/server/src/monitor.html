@@ -134,7 +134,7 @@
         main {
             padding: 30px 40px;
             display: grid;
-            grid-template-columns: 1fr 320px;
+            grid-template-columns: 1fr auto;
             grid-template-rows: auto auto 1fr;
             gap: 24px;
             flex: 1;
@@ -191,8 +191,8 @@
         }
 
         .controls-grid {
-            display: grid;
-            grid-template-columns: 1fr 1fr auto;
+            display: flex;
+            flex-wrap: wrap;
             gap: 20px;
             align-items: flex-end;
         }
@@ -201,6 +201,8 @@
             display: flex;
             flex-direction: column;
             gap: 8px;
+            flex: 1;
+            min-width: 150px;
         }
 
         label {
@@ -277,21 +279,24 @@
             grid-row: 1 / 3;
             display: flex;
             flex-direction: column;
+            width: fit-content;
+            min-width: 120px;
         }
 
         .vu-container {
             display: flex;
-            gap: 24px;
+            gap: 16px;
             flex: 1;
             padding-top: 10px;
+            justify-content: center;
         }
 
         .vu-column {
-            flex: 1;
             display: flex;
             flex-direction: column;
             align-items: center;
             gap: 12px;
+            width: 40px;
         }
 
         .vu-track {
