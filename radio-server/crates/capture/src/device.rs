@@ -6,6 +6,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 pub struct Device {
     fd: RawFd,
     channels: u32,
+    actual_format: u32,
     _file: std::fs::File,
 }
 
@@ -27,9 +28,10 @@ impl Device {
             params.intervals[idx].flags = 0; // inclusive range
         };
 
-        // Attempt formats: S32_LE, S24_LE, S16_LE
+        // Attempt formats: S32_LE, S24_3LE, S24_LE, S16_LE
         let formats_to_try = [
             SNDRV_PCM_FORMAT_S32_LE,
+            SNDRV_PCM_FORMAT_S24_3LE,
             SNDRV_PCM_FORMAT_S24_LE,
             SNDRV_PCM_FORMAT_S16_LE,
         ];
@@ -47,7 +49,9 @@ impl Device {
                 hw_params.masks[0].bits[0] = 1 << SNDRV_PCM_ACCESS_RW_INTERLEAVED;
                 
                 // 2. Constrain FORMAT
-                hw_params.masks[1].bits[0] = 1 << fmt;
+                let fmt_idx = (fmt / 32) as usize;
+                let fmt_bit = fmt % 32;
+                hw_params.masks[1].bits[fmt_idx] = 1 << fmt_bit;
 
                 // 3. Constrain SUBFORMAT (Standard)
                 hw_params.masks[2].bits[0] = 1 << 0; // SUBFORMAT_STD
@@ -95,14 +99,16 @@ impl Device {
         }
 
         // Validation: Verify the device didn't fallback to an unsupported rate or format constraint.
-        if final_hw_params.masks[1].bits[0] & (1 << actual_format) == 0 {
+        let actual_fmt_idx = (actual_format / 32) as usize;
+        let actual_fmt_bit = actual_format % 32;
+        if final_hw_params.masks[1].bits[actual_fmt_idx] & (1 << actual_fmt_bit) == 0 {
             return Err("Device fallback: hw format negotiation failed".into());
         }
         if final_hw_params.intervals[SNDRV_PCM_HW_PARAM_RATE - 8].min != 48000 {
             return Err("Device fallback: does not support 48000 Hz".into());
         }
 
-        Ok(Device { fd, channels: actual_channels, _file: file })
+        Ok(Device { fd, channels: actual_channels, actual_format, _file: file })
     }
 
     pub fn prepare(&self) {
@@ -118,6 +124,10 @@ impl Device {
 
     pub fn channels(&self) -> u32 {
         self.channels
+    }
+
+    pub fn format(&self) -> u32 {
+        self.actual_format
     }
 }
 
