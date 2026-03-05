@@ -101,9 +101,9 @@ impl RecorderTask {
             
             // Wait for ALSA readable event, or generate mock silence
             let (mut pcm_data, overrun) = if let Some(loop_ref) = &capture_loop {
-                match loop_ref.read_period().await {
-                    Ok(res) => res,
-                    Err(e) => {
+                match tokio::time::timeout(tokio::time::Duration::from_secs(2), loop_ref.read_period()).await {
+                    Ok(Ok(res)) => res,
+                    Ok(Err(e)) => {
                         let errno = e.raw_os_error().unwrap_or(0);
                         if errno == libc::ENODEV {
                             let _ = self.state.sse_tx.send(r#"{"type":"log","error":true,"message":"Device disconnected (ENODEV)"}"#.to_string());
@@ -115,6 +115,12 @@ impl RecorderTask {
                             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
                             continue;
                         }
+                    }
+                    Err(_) => {
+                        let _ = self.state.sse_tx.send(r#"{"type":"log","error":true,"message":"ALSA read timeout, device hung. Emitting silence."}"#.to_string());
+                        capture_loop = None;
+                        current_device_path = String::new();
+                        continue;
                     }
                 }
             } else {

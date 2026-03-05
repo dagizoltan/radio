@@ -34,7 +34,9 @@ onmessage = async (e) => {
             }
             break;
         case 'PLAY':
-            workletPort = msg.port;
+            if (msg.port) {
+                workletPort = msg.port;
+            }
             isPlaying = true;
             if (!isFetching) {
                 fetchNextSegment();
