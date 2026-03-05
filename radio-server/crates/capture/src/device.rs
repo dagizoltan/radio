@@ -124,6 +124,11 @@ impl Device {
         if ret < 0 {
             eprintln!("Failed to PREPARE device");
         }
+
+        let start_ret = unsafe { ioctl(self.fd, SNDRV_PCM_IOCTL_START as _) };
+        if start_ret < 0 {
+            eprintln!("Failed to START device capture stream");
+        }
     }
 
     pub fn raw_fd(&self) -> RawFd {

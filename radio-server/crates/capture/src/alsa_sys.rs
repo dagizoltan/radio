@@ -105,3 +105,4 @@ pub const SNDRV_PCM_FORMAT_S24_LE: u32 = 6;
 pub const SNDRV_PCM_FORMAT_S32_LE: u32 = 10;
 pub const SNDRV_PCM_FORMAT_S24_3LE: u32 = 32;
 pub const SNDRV_PCM_ACCESS_RW_INTERLEAVED: u32 = 3;
+pub const SNDRV_PCM_IOCTL_START: usize = 0x4142;

@@ -120,14 +120,16 @@ impl RecorderTask {
                 tokio::time::sleep(std::time::Duration::from_millis(85)).await;
 
                 let mut mock_data = vec![0i32; 8192];
-                // Generate a 440 Hz sine wave
+                // Generate a 440 Hz sine wave, modulated by a slow 2Hz LFO for realistic VU meter movement
                 let sample_rate = 48000.0;
                 let freq = 440.0;
+                let lfo_freq = 2.0;
                 let mut time_val = (frames_in_file as f64) / sample_rate;
-                let amplitude = 838860.0; // Moderate amplitude for 24-bit range
+                let base_amplitude = 838860.0; // Moderate amplitude for 24-bit range
 
                 for i in 0..4096 {
-                    let val = (time_val * freq * 2.0 * std::f64::consts::PI).sin() * amplitude;
+                    let lfo = ((time_val * lfo_freq * 2.0 * std::f64::consts::PI).sin() * 0.5) + 0.5; // Oscillates 0.0 to 1.0
+                    let val = (time_val * freq * 2.0 * std::f64::consts::PI).sin() * (base_amplitude * lfo);
                     mock_data[i * 2] = val as i32;     // Left
                     mock_data[i * 2 + 1] = val as i32; // Right
                     time_val += 1.0 / sample_rate;
