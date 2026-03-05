@@ -1,4 +1,5 @@
-use alsa::pcm::{PCM, HwParams, Format, Access, Direction};
+use alsa::pcm::{PCM, HwParams, Format, Access};
+use alsa::Direction;
 
 fn main() {
     let dev_name = "hw:1,0"; // Card 1, Device 0

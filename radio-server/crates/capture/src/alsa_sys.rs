@@ -103,4 +103,5 @@ pub const SNDRV_PCM_HW_PARAM_TICK_TIME: usize = 19;
 pub const SNDRV_PCM_FORMAT_S16_LE: u32 = 2;
 pub const SNDRV_PCM_FORMAT_S24_LE: u32 = 6;
 pub const SNDRV_PCM_FORMAT_S32_LE: u32 = 10;
+pub const SNDRV_PCM_FORMAT_S24_3LE: u32 = 32;
 pub const SNDRV_PCM_ACCESS_RW_INTERLEAVED: u32 = 3;

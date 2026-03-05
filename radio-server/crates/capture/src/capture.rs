@@ -6,12 +6,13 @@ use tokio::io::unix::AsyncFd;
 pub struct CaptureLoop {
     async_fd: AsyncFd<RawFd>,
     channels: u32,
+    format: u32,
 }
 
 impl CaptureLoop {
-    pub fn new(fd: RawFd, channels: u32) -> std::io::Result<Self> {
+    pub fn new(fd: RawFd, channels: u32, format: u32) -> std::io::Result<Self> {
         let async_fd = AsyncFd::new(fd)?;
-        Ok(CaptureLoop { async_fd, channels })
+        Ok(CaptureLoop { async_fd, channels, format })
     }
 
     pub async fn read_period(&self) -> std::io::Result<(Vec<i32>, bool)> {
@@ -20,6 +21,8 @@ impl CaptureLoop {
 
             let samples_per_frame = self.channels as usize;
             let total_samples = 4096 * samples_per_frame;
+
+            let is_3byte = self.format == SNDRV_PCM_FORMAT_S24_3LE;
             let mut raw_buffer = vec![0u32; total_samples];
 
             let mut xferi = SndrPcmXferi {
@@ -68,18 +71,68 @@ impl CaptureLoop {
                     continue;
                 }
 
-                // Sign-Extension: Iterate over raw u32 words, extract 24-bit audio
                 // Always return stereo to the rest of the application
                 let mut pcm_out = Vec::with_capacity(frames_read * 2);
-                for frame in 0..frames_read {
-                    let base = frame * samples_per_frame;
-                    let l_raw = raw_buffer[base];
-                    let r_raw = raw_buffer[base + 1]; // Guaranteed at least 2 channels are supported 
 
-                    let l: i32 = (l_raw as i32) >> 8;
-                    let r: i32 = (r_raw as i32) >> 8;
-                    pcm_out.push(l);
-                    pcm_out.push(r);
+                if self.format == SNDRV_PCM_FORMAT_S24_3LE {
+                    let raw_bytes = unsafe {
+                        std::slice::from_raw_parts(
+                            raw_buffer.as_ptr() as *const u8,
+                            frames_read * samples_per_frame * 3
+                        )
+                    };
+                    for frame in 0..frames_read {
+                        let base = frame * samples_per_frame * 3;
+                        let l_bytes = [raw_bytes[base], raw_bytes[base + 1], raw_bytes[base + 2]];
+                        let r_bytes = [raw_bytes[base + 3], raw_bytes[base + 4], raw_bytes[base + 5]];
+
+                        // Sign-extend from 24-bit to 32-bit (little-endian)
+                        let l_raw = (l_bytes[0] as i32) | ((l_bytes[1] as i32) << 8) | ((l_bytes[2] as i8 as i32) << 16);
+                        let r_raw = (r_bytes[0] as i32) | ((r_bytes[1] as i32) << 8) | ((r_bytes[2] as i8 as i32) << 16);
+
+                        pcm_out.push(l_raw);
+                        pcm_out.push(r_raw);
+                    }
+                } else if self.format == SNDRV_PCM_FORMAT_S16_LE {
+                    let raw_i16 = unsafe {
+                        std::slice::from_raw_parts(
+                            raw_buffer.as_ptr() as *const i16,
+                            frames_read * samples_per_frame
+                        )
+                    };
+                    for frame in 0..frames_read {
+                        let base = frame * samples_per_frame;
+                        let l_raw = raw_i16[base] as i32;
+                        let r_raw = raw_i16[base + 1] as i32;
+                        // Scale 16-bit to 24-bit range
+                        pcm_out.push(l_raw << 8);
+                        pcm_out.push(r_raw << 8);
+                    }
+                } else if self.format == SNDRV_PCM_FORMAT_S24_LE {
+                    for frame in 0..frames_read {
+                        let base = frame * samples_per_frame;
+                        let l_raw = raw_buffer[base];
+                        let r_raw = raw_buffer[base + 1];
+
+                        // sign extension for 24-bit in 32-bit
+                        let l_ext = ((l_raw as i32) << 8) >> 8;
+                        let r_ext = ((r_raw as i32) << 8) >> 8;
+
+                        pcm_out.push(l_ext);
+                        pcm_out.push(r_ext);
+                    }
+                } else {
+                    // Default assume S32_LE format and shift 8
+                    for frame in 0..frames_read {
+                        let base = frame * samples_per_frame;
+                        let l_raw = raw_buffer[base];
+                        let r_raw = raw_buffer[base + 1];
+
+                        let l: i32 = (l_raw as i32) >> 8;
+                        let r: i32 = (r_raw as i32) >> 8;
+                        pcm_out.push(l);
+                        pcm_out.push(r);
+                    }
                 }
 
                 return Ok((pcm_out, false));
