@@ -15,8 +15,6 @@ services:
     # Note: /dev/snd is bind-mounted; discovery.rs scans it for pcmC*D*c capture nodes.
     devices:
       - /dev/snd:/dev/snd
-      # Explicitly pass the Behringer UMC404HD (card 1, device 0, capture)
-      - /dev/snd/pcmC1D0c:/dev/snd/pcmC1D0c
     environment:
       - RUST_LOG=info
       - R2_ACCESS_KEY=minioadmin
