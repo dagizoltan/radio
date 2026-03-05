@@ -126,8 +126,11 @@ impl Device {
         // Apply Software Parameters to ensure EPOLL wakes up `AsyncFd` correctly
         let mut sw_params = SndrPcmSwParams::default();
         sw_params.avail_min = actual_period_size;
-        sw_params.start_threshold = actual_period_size;
-        sw_params.stop_threshold = actual_period_size * 4; // Stop on overrun
+        // By setting start_threshold to 1, we tell the ALSA driver to auto-start the stream
+        // as soon as it's read from or written to, avoiding hangs when manual START ioctl fails or is delayed.
+        sw_params.start_threshold = 1;
+        // A stop threshold helps prevent overruns hanging the stream
+        sw_params.stop_threshold = actual_period_size * 8;
 
         let sw_ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS as _, &mut sw_params) };
         if sw_ret < 0 {
@@ -144,6 +147,7 @@ impl Device {
             eprintln!("Failed to PREPARE device");
         }
 
+        // Auto-start is preferred, but explicitly start as a fallback
         let start_ret = unsafe { ioctl(self.fd, SNDRV_PCM_IOCTL_START as _) };
         if start_ret < 0 {
             eprintln!("Failed to START device capture stream");

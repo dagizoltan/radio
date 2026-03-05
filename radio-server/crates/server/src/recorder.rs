@@ -101,7 +101,8 @@ impl RecorderTask {
             
             // Wait for ALSA readable event, or generate mock silence
             let (mut pcm_data, overrun) = if let Some(loop_ref) = &capture_loop {
-                match tokio::time::timeout(tokio::time::Duration::from_secs(2), loop_ref.read_period()).await {
+                // Relax timeout slightly to give sluggish external hardware time to fill buffers initially
+                match tokio::time::timeout(tokio::time::Duration::from_secs(3), loop_ref.read_period()).await {
                     Ok(Ok(res)) => res,
                     Ok(Err(e)) => {
                         let errno = e.raw_os_error().unwrap_or(0);
@@ -117,10 +118,13 @@ impl RecorderTask {
                         }
                     }
                     Err(_) => {
-                        let _ = self.state.sse_tx.send(r#"{"type":"log","error":true,"message":"ALSA read timeout, device hung. Emitting silence."}"#.to_string());
+                        let _ = self.state.sse_tx.send(r#"{"type":"log","error":true,"message":"ALSA read timeout, device hung. Reopening..."}"#.to_string());
                         capture_loop = None;
                         current_device_path = String::new();
-                        continue;
+                        // Instead of continuing and skipping the whole processing, we should
+                        // emit some mock data for this frame to avoid UI freezing.
+                        let mut mock_data = vec![0i32; 8192];
+                        (mock_data, false)
                     }
                 }
             } else {
