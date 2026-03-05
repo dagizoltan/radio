@@ -44,6 +44,38 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         run_server(http_state, http_token).await;
     });
 
+    // Periodic metrics push → SSE (every 500ms)
+    let metrics_state = state.clone();
+    let metrics_token = token.clone();
+    tokio::spawn(async move {
+        let mut interval = tokio::time::interval(tokio::time::Duration::from_millis(100));
+        loop {
+            tokio::select! {
+                _ = interval.tick() => {}
+                _ = metrics_token.cancelled() => break,
+            }
+            let streaming = metrics_state.streaming.load(std::sync::atomic::Ordering::Relaxed);
+            let vu_left   = metrics_state.vu_left.load(std::sync::atomic::Ordering::Relaxed);
+            let vu_right  = metrics_state.vu_right.load(std::sync::atomic::Ordering::Relaxed);
+            let r2_seg    = metrics_state.r2_segment.load(std::sync::atomic::Ordering::Relaxed);
+            let overruns  = metrics_state.overruns.load(std::sync::atomic::Ordering::Relaxed);
+            let uploading = metrics_state.r2_uploading.load(std::sync::atomic::Ordering::Relaxed);
+            let rec_bytes = metrics_state.recording_bytes.load(std::sync::atomic::Ordering::Relaxed);
+            let rec_path  = metrics_state.recording_path.lock()
+                .unwrap_or_else(|e| e.into_inner()).clone();
+            
+            let wf = {
+                let wf_lock = metrics_state.waveform.lock().unwrap();
+                format!("{:?}", *wf_lock)
+            };
+
+            let msg = format!(
+                r#"{{"type":"metrics","streaming":{streaming},"vu_left":{vu_left},"vu_right":{vu_right},"r2_segment":{r2_seg},"overruns":{overruns},"uploading":{uploading},"recording_bytes":{rec_bytes},"recording_path":"{rec_path}","waveform":{wf}}}"#
+            );
+            let _ = metrics_state.sse_tx.send(msg);
+        }
+    });
+
     let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     let mut sigint = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::interrupt())?;
 

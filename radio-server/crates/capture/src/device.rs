@@ -5,6 +5,7 @@ use std::os::unix::io::{AsRawFd, RawFd};
 
 pub struct Device {
     fd: RawFd,
+    channels: u32,
     _file: std::fs::File,
 }
 
@@ -19,18 +20,11 @@ impl Device {
 
         let fd = file.as_raw_fd();
 
-        let mut hw_params = SndrPcmHwParams::default();
-
-        let _mask_idx_access = SNDRV_PCM_HW_PARAM_ACCESS;
-        let _mask_idx_format = SNDRV_PCM_HW_PARAM_FORMAT;
-
-        hw_params.masks[0].bits[0] = 1 << SNDRV_PCM_ACCESS_RW_INTERLEAVED;
-
         let set_interval = |params: &mut SndrPcmHwParams, param_idx: usize, val: u32| {
             let idx = param_idx - 8;
             params.intervals[idx].min = val;
             params.intervals[idx].max = val;
-            params.intervals[idx].flags = 2; // integer
+            params.intervals[idx].flags = 0; // inclusive range
         };
 
         // Attempt formats: S32_LE, S24_LE, S16_LE
@@ -42,22 +36,58 @@ impl Device {
 
         let mut success = false;
         let mut actual_format = 0;
+        let mut actual_channels = 0;
+        let mut final_hw_params = SndrPcmHwParams::default();
 
         for &fmt in &formats_to_try {
-            hw_params.masks[1].bits[0] = 1 << fmt;
-            hw_params.rmask = !0; // Request all params
+            for &ch in &[2, 4] {
+                let mut hw_params = SndrPcmHwParams::default();
 
-            set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_RATE, 48000);
-            set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_CHANNELS, 2);
-            set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, 4096);
-            set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIODS, 4);
+                // 1. Constrain ACCESS (Interleaved)
+                hw_params.masks[0].bits[0] = 1 << SNDRV_PCM_ACCESS_RW_INTERLEAVED;
+                
+                // 2. Constrain FORMAT
+                hw_params.masks[1].bits[0] = 1 << fmt;
 
-            let ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS as _, &mut hw_params) };
-            if ret >= 0 {
-                success = true;
-                actual_format = fmt;
-                break;
+                // 3. Constrain SUBFORMAT (Standard)
+                hw_params.masks[2].bits[0] = 1 << 0; // SUBFORMAT_STD
+
+                // 4. Set rmask for masks
+                hw_params.rmask |= (1 << SNDRV_PCM_HW_PARAM_ACCESS) | 
+                                 (1 << SNDRV_PCM_HW_PARAM_FORMAT) | 
+                                 (1 << SNDRV_PCM_HW_PARAM_SUBFORMAT);
+
+                // Initialize all intervals to [0, u32::MAX]
+                for iv in hw_params.intervals.iter_mut() {
+                    iv.min = 0; iv.max = u32::MAX;
+                    iv.flags = 0;
+                }
+
+                set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_RATE, 48000);
+                set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_CHANNELS, ch);
+                set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, 4096);
+                set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIODS, 4);
+
+                // Set rmask for intervals
+                hw_params.rmask |= (1 << SNDRV_PCM_HW_PARAM_RATE) |
+                                 (1 << SNDRV_PCM_HW_PARAM_CHANNELS) |
+                                 (1 << SNDRV_PCM_HW_PARAM_PERIOD_SIZE) |
+                                 (1 << SNDRV_PCM_HW_PARAM_PERIODS);
+
+                let ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS as _, &mut hw_params) };
+                if ret >= 0 {
+                    success = true;
+                    actual_format = fmt;
+                    actual_channels = ch;
+                    final_hw_params = hw_params;
+                    println!("SUCCESS: Set HW_PARAMS (format={}, channels={})", fmt, ch);
+                    break;
+                } else {
+                    let err = std::io::Error::last_os_error();
+                    println!("DEBUG: Failed HW_PARAMS (format={}, channels={}) -> err: {}", fmt, ch, err);
+                }
             }
+            if success { break; }
         }
 
         if !success {
@@ -65,14 +95,14 @@ impl Device {
         }
 
         // Validation: Verify the device didn't fallback to an unsupported rate or format constraint.
-        if hw_params.masks[1].bits[0] & (1 << actual_format) == 0 {
+        if final_hw_params.masks[1].bits[0] & (1 << actual_format) == 0 {
             return Err("Device fallback: hw format negotiation failed".into());
         }
-        if hw_params.intervals[SNDRV_PCM_HW_PARAM_RATE - 8].min != 48000 {
+        if final_hw_params.intervals[SNDRV_PCM_HW_PARAM_RATE - 8].min != 48000 {
             return Err("Device fallback: does not support 48000 Hz".into());
         }
 
-        Ok(Device { fd, _file: file })
+        Ok(Device { fd, channels: actual_channels, _file: file })
     }
 
     pub fn prepare(&self) {
@@ -84,6 +114,10 @@ impl Device {
 
     pub fn raw_fd(&self) -> RawFd {
         self.fd
+    }
+
+    pub fn channels(&self) -> u32 {
+        self.channels
     }
 }
 

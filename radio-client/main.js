@@ -83,7 +83,10 @@ app.get('/', async (c) => {
     // Check if manifest is valid to set data-live
     const r2PublicUrl = Deno.env.get('R2_PUBLIC_URL') || 'http://localhost:8080/manifest.json';
     const response = await fetch(r2PublicUrl);
-    if (!response.ok) throw new Error('Bad R2 Response');
+    if (!response.ok) {
+      const txt = await response.text();
+      throw new Error(`Bad R2 Response: ${response.status} ${txt}`);
+    }
     const manifest = await response.json();
     live = manifest.live ? 'true' : 'false';
   } catch (err) {

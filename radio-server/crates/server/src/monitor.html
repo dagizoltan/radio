@@ -4,182 +4,630 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Radio Monitor</title>
+    <title>Radio Pro Monitor</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap"
+        rel="stylesheet">
     <style>
+        :root {
+            --bg: #05070a;
+            --accent: #6366f1;
+            --accent-glow: rgba(99, 102, 241, 0.4);
+            --surface: rgba(255, 255, 255, 0.03);
+            --surface-hover: rgba(255, 255, 255, 0.06);
+            --border: rgba(255, 255, 255, 0.08);
+            --text: #f8fafc;
+            --muted: #94a3b8;
+            --green: #22c55e;
+            --yellow: #eab308;
+            --red: #ef4444;
+            --glass: rgba(15, 23, 42, 0.6);
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+        }
+
         body {
-            font-family: monospace;
-            background: #111;
-            color: #eee;
-            padding: 20px;
+            font-family: 'Outfit', sans-serif;
+            background: var(--bg);
+            background-image:
+                radial-gradient(at 0% 0%, rgba(99, 102, 241, 0.15) 0px, transparent 50%),
+                radial-gradient(at 100% 100%, rgba(168, 85, 247, 0.1) 0px, transparent 50%);
+            color: var(--text);
+            min-height: 100vh;
+            overflow-x: hidden;
+            display: flex;
+            flex-direction: column;
         }
 
-        .vu {
-            display: inline-block;
-            width: 200px;
-            height: 20px;
-            background: #333;
-            margin-right: 10px;
+        /* ── Header ── */
+        header {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 20px 40px;
+            background: rgba(15, 23, 42, 0.4);
+            backdrop-filter: blur(12px);
+            border-bottom: 1px solid var(--border);
+            z-index: 100;
         }
 
-        .vu-inner {
+        .logo {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 36px;
+            height: 36px;
+            background: linear-gradient(135deg, var(--accent), #a855f7);
+            border-radius: 10px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 20px;
+            box-shadow: 0 0 20px var(--accent-glow);
+        }
+
+        .logo h1 {
+            font-size: 1.25rem;
+            font-weight: 700;
+            letter-spacing: -0.02em;
+            background: linear-gradient(to right, #fff, #94a3b8);
+            background-clip: text;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            padding: 8px 16px;
+            border-radius: 50px;
+            font-size: 0.75rem;
+            font-weight: 600;
+            letter-spacing: 0.1em;
+            text-transform: uppercase;
+            background: var(--surface);
+            border: 1px solid var(--border);
+        }
+
+        .status-pill.live {
+            color: var(--green);
+            border-color: rgba(34, 197, 94, 0.3);
+            background: rgba(34, 197, 94, 0.05);
+        }
+
+        .status-pill.live .dot {
+            width: 8px;
+            height: 8px;
+            background: var(--green);
+            border-radius: 50%;
+            box-shadow: 0 0 10px var(--green);
+            animation: pulse-dot 2s infinite;
+        }
+
+        @keyframes pulse-dot {
+            0% {
+                opacity: 1;
+                transform: scale(1);
+            }
+
+            50% {
+                opacity: 0.5;
+                transform: scale(1.2);
+            }
+
+            100% {
+                opacity: 1;
+                transform: scale(1);
+            }
+        }
+
+        /* ── Main content ── */
+        main {
+            padding: 30px 40px;
+            display: grid;
+            grid-template-columns: 1fr 320px;
+            grid-template-rows: auto auto 1fr;
+            gap: 24px;
+            flex: 1;
+        }
+
+        .glass-card {
+            background: var(--glass);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border);
+            border-radius: 24px;
+            padding: 24px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 20px;
+        }
+
+        .card-label {
+            font-size: 0.7rem;
+            font-weight: 700;
+            text-transform: uppercase;
+            letter-spacing: 0.15em;
+            color: var(--muted);
+        }
+
+        /* ── Waveform Oscilloscope ── */
+        .visualizer-card {
+            grid-column: 1;
+            grid-row: 1;
+            min-height: 200px;
+        }
+
+        .waveform-container {
+            width: 100%;
+            height: 120px;
+            position: relative;
+        }
+
+        canvas {
+            width: 100%;
             height: 100%;
-            background: #0f0;
-            transition: width 0.1s;
         }
 
-        .controls {
-            margin-top: 20px;
+        /* ── Controls ── */
+        .controls-card {
+            grid-column: 1;
+            grid-row: 2;
         }
 
-        button {
-            padding: 10px;
-            background: #444;
-            color: white;
-            border: none;
+        .controls-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr auto;
+            gap: 20px;
+            align-items: flex-end;
+        }
+
+        .input-group {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+        }
+
+        label {
+            font-size: 0.75rem;
+            font-weight: 600;
+            color: var(--muted);
+        }
+
+        select {
+            background: var(--surface);
+            border: 1px solid var(--border);
+            border-radius: 12px;
+            padding: 12px 16px;
+            color: var(--text);
+            font-family: inherit;
+            font-size: 0.9rem;
+            width: 100%;
             cursor: pointer;
+            transition: all 0.2s;
+            appearance: none;
+            background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24' fill='none' stroke='%2394a3b8' stroke-width='2' stroke-linecap='round' stroke-linejoin='round'%3E%3Cpolyline points='6 9 12 15 18 9'%3E%3C/polyline%3E%3C/svg%3E");
+            background-repeat: no-repeat;
+            background-position: right 12px center;
+            background-size: 16px;
         }
 
-        button:hover {
-            background: #555;
+        select:hover {
+            border-color: var(--accent);
+            background-color: var(--surface-hover);
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 12px;
+        }
+
+        .btn {
+            padding: 12px 24px;
+            border-radius: 12px;
+            font-weight: 600;
+            font-family: inherit;
+            cursor: pointer;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            border: none;
+        }
+
+        .btn-primary {
+            background: var(--accent);
+            color: white;
+            box-shadow: 0 4px 15px var(--accent-glow);
+        }
+
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 25px var(--accent-glow);
+        }
+
+        .btn-danger {
+            background: rgba(239, 68, 68, 0.1);
+            color: var(--red);
+            border: 1px solid rgba(239, 68, 68, 0.2);
+        }
+
+        .btn-danger:hover {
+            background: rgba(239, 68, 68, 0.15);
+        }
+
+        /* ── Meters Panel ── */
+        .meters-panel {
+            grid-column: 2;
+            grid-row: 1 / 3;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .vu-container {
+            display: flex;
+            gap: 24px;
+            flex: 1;
+            padding-top: 10px;
+        }
+
+        .vu-column {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .vu-track {
+            width: 32px;
+            flex: 1;
+            background: rgba(0, 0, 0, 0.3);
+            border-radius: 50px;
+            position: relative;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column-reverse;
+            border: 1px solid var(--border);
+        }
+
+        .vu-bar {
+            width: 100%;
+            height: 0%;
+            background: linear-gradient(to top, #22c55e, #eab308 70%, #ef4444 90%);
+            border-radius: 50px;
+            transition: height 0.05s linear;
+        }
+
+        .vu-peak {
+            position: absolute;
+            width: 100%;
+            height: 2px;
+            background: white;
+            box-shadow: 0 0 10px white;
+            z-index: 10;
+        }
+
+        .db-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.75rem;
+            color: var(--muted);
+        }
+
+        /* ── Metrics Grid ── */
+        .metrics-card {
+            grid-column: 1 / -1;
+            grid-row: 3;
+        }
+
+        .metrics-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+        }
+
+        .metric-box {
+            padding: 16px;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 16px;
+            border: 1px solid var(--border);
+        }
+
+        .metric-value {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 1.5rem;
+            font-weight: 500;
+            margin-top: 4px;
+        }
+
+        /* ── Events Panel ── */
+        .events-panel {
+            margin-top: 24px;
+            grid-column: 1 / -1;
         }
 
         #logs {
-            margin-top: 20px;
-            height: 300px;
+            height: 200px;
             overflow-y: auto;
-            background: #222;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.8rem;
+            color: var(--muted);
             padding: 10px;
-            border: 1px solid #444;
+            background: rgba(0, 0, 0, 0.2);
+            border-radius: 12px;
+            line-height: 1.6;
+        }
+
+        .log-line {
+            border-bottom: 1px solid rgba(255, 255, 255, 0.03);
+            padding: 4px 0;
+        }
+
+        .log-ts {
+            color: var(--accent);
+            margin-right: 10px;
+        }
+
+        .log-err {
+            color: var(--red);
+        }
+
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+
+        ::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: var(--border);
+            border-radius: 10px;
         }
     </style>
 </head>
 
 <body>
-    <h1>Radio Monitor</h1>
-    <div>
-        <label>Streaming: <span id="streaming-status">Unknown</span></label>
-    </div>
-    <div>
-        <label>Left VU: </label>
-        <div class="vu">
-            <div id="vu-left" class="vu-inner" style="width: 0%"></div>
+    <header>
+        <div class="logo">
+            <div class="logo-icon">PRO</div>
+            <h1>Radio Monitor</h1>
         </div>
-    </div>
-    <div>
-        <label>Right VU:</label>
-        <div class="vu">
-            <div id="vu-right" class="vu-inner" style="width: 0%"></div>
+        <div id="streaming-badge" class="status-pill">
+            <div class="dot"></div>
+            <span id="streaming-label">OFFLINE</span>
         </div>
-    </div>
-    <div>
-        <label>R2 Segment:</label> <span id="r2-segment">0</span>
-    </div>
+    </header>
 
-    <div class="controls">
-        <label>Device:</label>
-        <select id="device-select" onchange="saveSettings()"></select>
+    <main>
+        <div class="glass-card visualizer-card">
+            <div class="card-header">
+                <span class="card-label">Live Oscilloscope</span>
+                <span id="device-info" class="db-label">Initializing...</span>
+            </div>
+            <div class="waveform-container">
+                <canvas id="waveformCanvas"></canvas>
+            </div>
+        </div>
 
-        <label style="margin-left: 20px;">Channels:</label>
-        <select id="channel-select" onchange="saveSettings()">
-            <option value="stereo">Stereo</option>
-            <option value="left">Mono (Left)</option>
-            <option value="right">Mono (Right)</option>
-        </select>
-    </div>
+        <div class="glass-card meters-panel">
+            <div class="card-header"><span class="card-label">Levels</span></div>
+            <div class="vu-container">
+                <div class="vu-column">
+                    <div class="vu-track">
+                        <div id="vu-l" class="vu-bar"></div>
+                        <div id="peak-l" class="vu-peak"></div>
+                    </div>
+                    <span class="db-label">L</span>
+                    <span id="db-l" class="db-label">-- dB</span>
+                </div>
+                <div class="vu-column">
+                    <div class="vu-track">
+                        <div id="vu-r" class="vu-bar"></div>
+                        <div id="peak-r" class="vu-peak"></div>
+                    </div>
+                    <span class="db-label">R</span>
+                    <span id="db-r" class="db-label">-- dB</span>
+                </div>
+            </div>
+        </div>
 
-    <div class="controls">
-        <button onclick="startStream()">Start Stream</button>
-        <button onclick="stopStream()">Stop Stream</button>
-    </div>
+        <div class="glass-card controls-card">
+            <div class="card-header"><span class="card-label">Configuration</span></div>
+            <div class="controls-grid">
+                <div class="input-group">
+                    <label>Capture Device</label>
+                    <select id="device-select" onchange="saveSettings()"></select>
+                </div>
+                <div class="input-group">
+                    <label>Routing</label>
+                    <select id="channel-select" onchange="saveSettings()">
+                        <option value="stereo">Full Stereo</option>
+                        <option value="left">Mono (Left)</option>
+                        <option value="right">Mono (Right)</option>
+                    </select>
+                </div>
+                <div class="btn-group">
+                    <button class="btn btn-primary" onclick="startStream()">Start Transmission</button>
+                    <button class="btn btn-danger" onclick="stopStream()">Cut Stream</button>
+                </div>
+            </div>
+        </div>
 
-    <div id="logs"></div>
+        <div class="glass-card metrics-card">
+            <div class="card-header"><span class="card-label">System Telemetry</span></div>
+            <div class="metrics-grid">
+                <div class="metric-box">
+                    <div class="card-label">Active segment</div>
+                    <div id="m-segment" class="metric-value">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="card-label">Throughput / Size</div>
+                    <div id="m-size" class="metric-value">0.0 MB</div>
+                </div>
+                <div class="metric-box">
+                    <div class="card-label">Buffer Health</div>
+                    <div id="m-overruns" class="metric-value">0</div>
+                </div>
+                <div class="metric-box">
+                    <div class="card-label">S3 Status</div>
+                    <div id="m-upload" class="metric-value" style="color: var(--muted)">IDLE</div>
+                </div>
+            </div>
+
+            <div class="events-panel">
+                <div class="card-header"><span class="card-label">Audit Log</span></div>
+                <div id="logs"></div>
+            </div>
+        </div>
+    </main>
 
     <script>
-        const evtSource = new EventSource("/events");
-        const logs = document.getElementById('logs');
+        const canvas = document.getElementById('waveformCanvas');
+        const ctx = canvas.getContext('2d');
+        const VU_MAX = 8388607;
+        const DB_FLOOR = -48;
+
+        let peakL = -Infinity, peakR = -Infinity;
+        let peakTimerL, peakTimerR;
+
+        function resizeCanvas() {
+            canvas.width = canvas.offsetWidth * window.devicePixelRatio;
+            canvas.height = canvas.offsetHeight * window.devicePixelRatio;
+        }
+        window.onresize = resizeCanvas;
+        resizeCanvas();
+
+        function drawWaveform(data) {
+            ctx.clearRect(0, 0, canvas.width, canvas.height);
+            ctx.beginPath();
+            ctx.strokeStyle = '#6366f1';
+            ctx.lineWidth = 2 * window.devicePixelRatio;
+            ctx.lineJoin = 'round';
+
+            const sliceWidth = canvas.width / data.length;
+            let x = 0;
+
+            for (let i = 0; i < data.length; i++) {
+                // data is i16 [-32768, 32767]
+                const v = data[i] / 32768.0;
+                const y = (v * canvas.height / 2) + (canvas.height / 2);
+
+                if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+                x += sliceWidth;
+            }
+            ctx.stroke();
+
+            // Glow effect
+            ctx.shadowBlur = 15;
+            ctx.shadowColor = 'rgba(99, 102, 241, 0.5)';
+            ctx.stroke();
+            ctx.shadowBlur = 0;
+        }
+
+        function linearToDb(val) {
+            if (val <= 0) return -Infinity;
+            const db = 20 * Math.log10(Math.abs(val) / VU_MAX);
+            return Math.max(DB_FLOOR, db);
+        }
+
+        function dbToPct(db) {
+            return Math.min(100, Math.max(0, ((db - DB_FLOOR) / (0 - DB_FLOOR)) * 100));
+        }
+
+        const sse = new EventSource('/events');
+        sse.onmessage = (e) => {
+            if (e.data === 'keepalive') return;
+            const data = JSON.parse(e.data);
+
+            if (data.type === 'metrics') {
+                // Update Waveform
+                if (data.waveform) drawWaveform(data.waveform);
+
+                // Update Meters
+                const dbL = linearToDb(data.vu_left);
+                const dbR = linearToDb(data.vu_right);
+
+                document.getElementById('vu-l').style.height = dbToPct(dbL) + '%';
+                document.getElementById('vu-r').style.height = dbToPct(dbR) + '%';
+                document.getElementById('db-l').textContent = (dbL > DB_FLOOR ? dbL.toFixed(1) : '-inf') + ' dB';
+                document.getElementById('db-r').textContent = (dbR > DB_FLOOR ? dbR.toFixed(1) : '-inf') + ' dB';
+
+                if (dbL > peakL) { peakL = dbL; clearTimeout(peakTimerL); peakTimerL = setTimeout(() => peakL = -Infinity, 2000); }
+                if (dbR > peakR) { peakR = dbR; clearTimeout(peakTimerR); peakTimerR = setTimeout(() => peakR = -Infinity, 2000); }
+
+                document.getElementById('peak-l').style.bottom = dbToPct(peakL) + '%';
+                document.getElementById('peak-r').style.bottom = dbToPct(peakR) + '%';
+
+                // Update UI State
+                const streamBadge = document.getElementById('streaming-badge');
+                streamBadge.className = 'status-pill' + (data.streaming ? ' live' : '');
+                document.getElementById('streaming-label').textContent = data.streaming ? 'LIVE' : 'OFFLINE';
+
+                document.getElementById('m-segment').textContent = data.r2_segment;
+                document.getElementById('m-size').textContent = (data.recording_bytes / 1024 / 1024).toFixed(1) + ' MB';
+                document.getElementById('m-overruns').textContent = data.overruns;
+                document.getElementById('m-overruns').style.color = data.overruns > 0 ? 'var(--red)' : 'var(--text)';
+
+                const up = document.getElementById('m-upload');
+                up.textContent = data.uploading ? 'UPLOADING...' : 'IDLE';
+                up.style.color = data.uploading ? 'var(--accent)' : 'var(--muted)';
+
+                const sel = document.getElementById('device-select');
+                const opt = sel.options[sel.selectedIndex];
+                document.getElementById('device-info').textContent = opt ? opt.textContent : 'Unknown';
+            } else {
+                const logs = document.getElementById('logs');
+                const line = document.createElement('div');
+                line.className = 'log-line' + (data.error ? ' log-err' : '');
+                const ts = new Date().toLocaleTimeString();
+                line.innerHTML = `<span class="log-ts">[${ts}]</span> ${data.message}`;
+                logs.prepend(line);
+                if (logs.childNodes.length > 100) logs.lastChild.remove();
+            }
+        };
 
         async function loadDevices() {
-            try {
-                const res = await fetch('/devices');
-                const devices = await res.json();
-                const select = document.getElementById('device-select');
-                select.innerHTML = '';
-                devices.forEach(d => {
-                    const opt = document.createElement('option');
-                    opt.value = d.id;
-                    opt.textContent = d.label;
-                    select.appendChild(opt);
-                });
-            } catch (err) {
-                console.error("Failed to load devices", err);
-            }
+            const res = await fetch('/devices');
+            const devices = await res.json();
+            const select = document.getElementById('device-select');
+            select.innerHTML = '';
+            devices.forEach(d => {
+                const opt = document.createElement('option');
+                opt.value = d.id;
+                opt.textContent = d.label;
+                select.appendChild(opt);
+            });
         }
 
         async function saveSettings() {
             const device = document.getElementById('device-select').value;
             const channel = document.getElementById('channel-select').value;
-
-            try {
-                await fetch('/settings', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ device, channel })
-                });
-            } catch (err) {
-                console.error("Failed to save settings", err);
-            }
+            await fetch('/settings', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ device, channel })
+            });
         }
 
-        function log(msg) {
-            const div = document.createElement('div');
-            div.textContent = `[${new Date().toISOString()}] ${msg}`;
-            if (msg.includes('"error":true')) {
-                div.style.color = '#ff6666';
-            }
-            logs.appendChild(div);
-            logs.scrollTop = logs.scrollHeight;
-        }
+        async function startStream() { await fetch('/start', { method: 'POST' }); }
+        async function stopStream() { await fetch('/stop', { method: 'POST' }); }
 
-        evtSource.onmessage = function (e) {
-            try {
-                if (e.data === "keepalive") return;
-                const data = JSON.parse(e.data);
-
-                if (data.type === "metrics") {
-                    document.getElementById('streaming-status').textContent = data.streaming ? "Yes" : "No";
-
-                    // VU max is ~8388607 for 24-bit
-                    const vuMax = 8388607;
-                    const pctLeft = Math.min(100, Math.max(0, (data.vu_left / vuMax) * 100));
-                    const pctRight = Math.min(100, Math.max(0, (data.vu_right / vuMax) * 100));
-
-                    document.getElementById('vu-left').style.width = pctLeft + '%';
-                    document.getElementById('vu-right').style.width = pctRight + '%';
-
-                    document.getElementById('r2-segment').textContent = data.r2_segment;
-                } else if (data.type === "log" || data.error) {
-                    if (data.message) {
-                        log(data.error ? "ERROR: " + data.message : data.message);
-                    } else {
-                        log(JSON.stringify(data));
-                    }
-                }
-            } catch (err) { }
-        };
-
-        evtSource.addEventListener("ping", function (e) {
-            // Keepalive
-        });
-
-        async function startStream() {
-            await fetch('/start', { method: 'POST' });
-        }
-
-        async function stopStream() {
-            await fetch('/stop', { method: 'POST' });
-        }
-
-        // Initialize
         loadDevices();
     </script>
 </body>

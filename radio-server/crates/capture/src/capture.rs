@@ -5,20 +5,22 @@ use tokio::io::unix::AsyncFd;
 
 pub struct CaptureLoop {
     async_fd: AsyncFd<RawFd>,
+    channels: u32,
 }
 
 impl CaptureLoop {
-    pub fn new(fd: RawFd) -> std::io::Result<Self> {
+    pub fn new(fd: RawFd, channels: u32) -> std::io::Result<Self> {
         let async_fd = AsyncFd::new(fd)?;
-        Ok(CaptureLoop { async_fd })
+        Ok(CaptureLoop { async_fd, channels })
     }
 
     pub async fn read_period(&self) -> std::io::Result<(Vec<i32>, bool)> {
         loop {
             let mut guard = self.async_fd.readable().await?;
 
-            // Try to read one period (4096 frames = 8192 samples)
-            let mut raw_buffer = vec![0u32; 8192];
+            let samples_per_frame = self.channels as usize;
+            let total_samples = 4096 * samples_per_frame;
+            let mut raw_buffer = vec![0u32; total_samples];
 
             let mut xferi = SndrPcmXferi {
                 result: 0,
@@ -42,7 +44,7 @@ impl CaptureLoop {
                     // XRUN Recovery
                     eprintln!("WARN: ALSA buffer overrun (EPIPE)");
 
-                    // Synthesize a zero-padded buffer of exactly 4096 * 2 (8192) 0i32 values.
+                    // Synthesize a zero-padded stereo buffer
                     let silence = vec![0i32; 8192];
 
                     // Call IOCTL_PREPARE to reset the hardware.
@@ -67,11 +69,17 @@ impl CaptureLoop {
                 }
 
                 // Sign-Extension: Iterate over raw u32 words, extract 24-bit audio
+                // Always return stereo to the rest of the application
                 let mut pcm_out = Vec::with_capacity(frames_read * 2);
-                for i in 0..(frames_read * 2) {
-                    let raw_word = raw_buffer[i];
-                    let sample: i32 = (raw_word as i32) << 8 >> 8;
-                    pcm_out.push(sample);
+                for frame in 0..frames_read {
+                    let base = frame * samples_per_frame;
+                    let l_raw = raw_buffer[base];
+                    let r_raw = raw_buffer[base + 1]; // Guaranteed at least 2 channels are supported 
+
+                    let l: i32 = (l_raw as i32) >> 8;
+                    let r: i32 = (r_raw as i32) >> 8;
+                    pcm_out.push(l);
+                    pcm_out.push(r);
                 }
 
                 return Ok((pcm_out, false));
@@ -84,9 +92,9 @@ impl CaptureLoop {
 mod tests {
     #[test]
     fn test_sign_extension() {
-        // Feed 0x00_80_00_00 (which is negative in 24-bit two's complement)
-        let raw_word: u32 = 0x00800000;
-        let sample: i32 = (raw_word as i32) << 8 >> 8;
+        // Feed 0x80_00_00_00 (which is negative in 32-bit two's complement)
+        let raw_word: u32 = 0x80000000;
+        let sample: i32 = (raw_word as i32) >> 8;
         assert_eq!(sample, -8388608);
     }
 }

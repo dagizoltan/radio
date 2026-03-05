@@ -32,6 +32,9 @@ impl ConverterTask {
             *state_header = Some(Bytes::from(header));
         }
 
+        // Initialize the segment index from state, so it doesn't restart at 0 and get dropped by uploader
+        let segment_index = state.r2_segment.load(std::sync::atomic::Ordering::Relaxed) + 1;
+
         ConverterTask {
             pcm_rx,
             seg_tx,
@@ -41,7 +44,7 @@ impl ConverterTask {
             hq_accumulator: Vec::with_capacity(2955000),
             lq_accumulator: Vec::with_capacity(985000),
             frame_counter: 0,
-            segment_index: 0,
+            segment_index,
         }
     }
 

@@ -43,6 +43,7 @@ impl RecorderTask {
         let mut frames_in_file = 0u64;
         let mut file_frame_number = 0u64;
         let frames_per_hour = 48000 * 60 * 60; // 172,800,000 frames
+        let mut last_debug_log = std::time::Instant::now();
 
         loop {
             if self.token.is_cancelled() {
@@ -53,8 +54,8 @@ impl RecorderTask {
             let desired_device = { self.state.selected_device.lock().unwrap().clone() };
             let should_stream = self.state.streaming.load(Ordering::SeqCst);
             
-            // Reconfigure if device changed or we stopped streaming
-            if !should_stream || desired_device != current_device_path {
+            // Reconfigure if device changed
+            if desired_device != current_device_path {
                 if capture_loop.is_some() {
                     let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Closing capture device: {}"}}"#, current_device_path));
                     capture_loop = None;
@@ -62,8 +63,8 @@ impl RecorderTask {
                 }
             }
 
-            if should_stream && capture_loop.is_none() {
-                // Try to open
+            if capture_loop.is_none() && current_device_path != desired_device {
+                // Try to open (only when device has changed)
                 let is_mock = desired_device == "mock_device";
                 let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Opening capture device: {}"}}"#, desired_device));
 
@@ -74,7 +75,7 @@ impl RecorderTask {
                     match Device::open(&desired_device) {
                         Ok(device) => {
                             device.prepare();
-                            match CaptureLoop::new(device.raw_fd()) {
+                            match CaptureLoop::new(device.raw_fd(), device.channels()) {
                                 Ok(cl) => {
                                     capture_loop = Some(cl);
                                     current_device_path = desired_device;
@@ -96,36 +97,6 @@ impl RecorderTask {
                 }
             }
             
-            if !should_stream {
-                tokio::time::sleep(tokio::time::Duration::from_millis(100)).await;
-                continue;
-            }
-
-            // Need a rotation?
-            if archive_file.is_none() || frames_in_file >= frames_per_hour {
-                if let Some(file) = archive_file.take() {
-                    let _ = file.sync_all(); // Fsync old file
-                }
-
-                // Open new timestamped file
-                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
-                let filename = format!("archive_{}.flac", ts);
-                let filepath = self.local_archive_dir.join(&filename);
-
-                {
-                    let mut rp = self.state.recording_path.lock().unwrap_or_else(|e| e.into_inner());
-                    *rp = filepath.to_string_lossy().to_string();
-                }
-
-                let mut new_file = File::create(&filepath)?;
-                let header = archive_encoder.stream_header();
-                new_file.write_all(&header)?;
-
-                archive_file = Some(new_file);
-                frames_in_file = 0;
-                file_frame_number = 0; // reset FLAC frame numbering for the new file
-            }
-
             // Wait for ALSA readable event, or generate mock silence
             let (mut pcm_data, overrun) = if let Some(loop_ref) = &capture_loop {
                 match loop_ref.read_period().await {
@@ -158,6 +129,40 @@ impl RecorderTask {
             
             let frames_read = pcm_data.len() / 2;
             
+            // Calculate true VU values before routing
+            let mut max_l = 0;
+            let mut max_r = 0;
+            for i in (0..pcm_data.len()).step_by(2) {
+                let l = pcm_data[i].abs();
+                let r = pcm_data[i+1].abs();
+                if l > max_l { max_l = l; }
+                if r > max_r { max_r = r; }
+            }
+            self.state.vu_left.store(max_l, Ordering::Relaxed);
+            self.state.vu_right.store(max_r, Ordering::Relaxed);
+
+            if last_debug_log.elapsed() > std::time::Duration::from_secs(1) {
+                if max_l > 0 || max_r > 0 {
+                    let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Signal detected! Max L: {}, Max R: {}"}}"#, max_l, max_r));
+                } else {
+                    let _ = self.state.sse_tx.send(r#"{"type":"log","message":"Silence detected (all zeros)"}"#.to_string());
+                }
+                last_debug_log = std::time::Instant::now();
+            }
+
+            // Populate waveform snapshot (128 points, mono downmix/left)
+            {
+                let mut wf = self.state.waveform.lock().unwrap();
+                let step = frames_read / 128;
+                if step > 0 {
+                    for i in 0..128 {
+                        let sample = pcm_data[i * step * 2];
+                        // Convert i32 (24-bit) to i16 for visualization efficiency
+                        wf[i] = (sample >> 8) as i16;
+                    }
+                }
+            }
+
             // Channel routing
             let desired_channel = { self.state.selected_channel.lock().unwrap().clone() };
             if desired_channel == "left" {
@@ -170,17 +175,35 @@ impl RecorderTask {
                 }
             }
 
-            // Calculate VU values
-            let mut max_l = 0;
-            let mut max_r = 0;
-            for i in (0..pcm_data.len()).step_by(2) {
-                let l = pcm_data[i].abs();
-                let r = pcm_data[i+1].abs();
-                if l > max_l { max_l = l; }
-                if r > max_r { max_r = r; }
+            // If we are not streaming, we don't encode or broadcast the audio data
+            if !should_stream {
+                continue;
             }
-            self.state.vu_left.store(max_l, Ordering::Relaxed);
-            self.state.vu_right.store(max_r, Ordering::Relaxed);
+
+            // Need a rotation?
+            if archive_file.is_none() || frames_in_file >= frames_per_hour {
+                if let Some(file) = archive_file.take() {
+                    let _ = file.sync_all(); // Fsync old file
+                }
+
+                // Open new timestamped file
+                let ts = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_secs();
+                let filename = format!("archive_{}.flac", ts);
+                let filepath = self.local_archive_dir.join(&filename);
+
+                {
+                    let mut rp = self.state.recording_path.lock().unwrap_or_else(|e| e.into_inner());
+                    *rp = filepath.to_string_lossy().to_string();
+                }
+
+                let mut new_file = File::create(&filepath)?;
+                let header = archive_encoder.stream_header();
+                new_file.write_all(&header)?;
+
+                archive_file = Some(new_file);
+                frames_in_file = 0;
+                file_frame_number = 0; // reset FLAC frame numbering for the new file
+            }
 
             // Encode to local archive
             let flac_frame = archive_encoder.encode_frame(&pcm_data, file_frame_number);

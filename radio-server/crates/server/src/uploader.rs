@@ -85,9 +85,13 @@ impl UploaderTask {
         // and issue deletes. For the sake of the prompt "delete all keys older than last_persisted_index - 10"
         // and "do not block the main Uploader loop", we perform basic list requests and deletes here.
 
+        // Optional: Get bucket from env, default to empty
+        let bucket = std::env::var("R2_BUCKET").unwrap_or_else(|_| "".to_string());
+        let bucket_prefix = if bucket.is_empty() { String::new() } else { format!("/{bucket}") };
+
         let prefixes = ["live/hq/", "live/lq/"];
         for prefix in prefixes {
-            let uri = "/";
+            let uri = if bucket_prefix.is_empty() { "/".to_string() } else { bucket_prefix.clone() };
             let query = format!("prefix={}", prefix);
 
             let url = format!("{}{}?{}", endpoint, uri, query);
@@ -102,14 +106,14 @@ impl UploaderTask {
             let payload_hash = hex::encode(Sha256::digest(b""));
 
             let mut headers = BTreeMap::new();
-            let host = url.replace("https://", "").split('/').next().unwrap_or("").to_string();
+            let host = url.replace("https://", "").replace("http://", "").split('/').next().unwrap_or("").to_string();
             headers.insert("Host".to_string(), host);
             headers.insert("x-amz-date".to_string(), amz_date.clone());
             headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
 
             let (auth_header, _) = generate_sigv4(
                 "GET",
-                uri,
+                &uri,
                 &query,
                 &headers,
                 &payload_hash,
@@ -250,7 +254,9 @@ impl UploaderTask {
     }
 
     async fn upload_with_retry(&self, quality: &str, index: u64, body: Vec<u8>, content_type: &str) -> bool {
-        let uri = format!("/live/{}/segment-{:08}.flac", quality, index);
+        let bucket = std::env::var("R2_BUCKET").unwrap_or_else(|_| "".to_string());
+        let bucket_prefix = if bucket.is_empty() { String::new() } else { format!("/{bucket}") };
+        let uri = format!("{bucket_prefix}/live/{quality}/segment-{index:08}.flac");
 
         for attempt in 0..3 {
             if attempt > 0 {
@@ -269,7 +275,11 @@ impl UploaderTask {
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_millis(500 * (1 << (attempt - 1)))).await;
             }
-            if let Ok(true) = self.put_s3("/manifest.json", body.clone(), "application/json", "no-store, max-age=0").await {
+            let bucket = std::env::var("R2_BUCKET").unwrap_or_else(|_| "".to_string());
+            let bucket_prefix = if bucket.is_empty() { String::new() } else { format!("/{bucket}") };
+            let uri = format!("{bucket_prefix}/manifest.json");
+            
+            if let Ok(true) = self.put_s3(&uri, body.clone(), "application/json", "no-store, max-age=0").await {
                 return true;
             }
         }
@@ -294,7 +304,7 @@ impl UploaderTask {
         let payload_hash = hex::encode(Sha256::digest(&body));
 
         let mut headers = BTreeMap::new();
-        let host = url.replace("https://", "").split('/').next().unwrap_or("").to_string();
+        let host = url.replace("https://", "").replace("http://", "").split('/').next().unwrap_or("").to_string();
         headers.insert("Host".to_string(), host);
         headers.insert("x-amz-date".to_string(), amz_date.clone());
         headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
@@ -345,7 +355,10 @@ impl UploaderTask {
     }
 
     async fn delete_s3_segment(&self, quality: &str, index: u64) {
-        let uri = format!("/live/{}/segment-{:08}.flac", quality, index);
+        let bucket = std::env::var("R2_BUCKET").unwrap_or_else(|_| "".to_string());
+        let bucket_prefix = if bucket.is_empty() { String::new() } else { format!("/{bucket}") };
+        let uri = format!("{bucket_prefix}/live/{quality}/segment-{index:08}.flac");
+        
         let access_key = std::env::var("R2_ACCESS_KEY").unwrap_or_else(|_| "test_access".to_string());
         let secret_key = std::env::var("R2_SECRET_KEY").unwrap_or_else(|_| "test_secret".to_string());
         let endpoint = std::env::var("R2_ENDPOINT").unwrap_or_else(|_| "https://test.s3.amazonaws.com".to_string());
@@ -363,7 +376,7 @@ impl UploaderTask {
         let payload_hash = hex::encode(Sha256::digest(b""));
 
         let mut headers = BTreeMap::new();
-        let host = url.replace("https://", "").split('/').next().unwrap_or("").to_string();
+        let host = url.replace("https://", "").replace("http://", "").split('/').next().unwrap_or("").to_string();
         headers.insert("Host".to_string(), host);
         headers.insert("x-amz-date".to_string(), amz_date.clone());
         headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());

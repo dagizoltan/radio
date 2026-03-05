@@ -19,6 +19,7 @@ pub struct AppState {
     pub overruns: AtomicU64,
     pub selected_device: Mutex<String>,
     pub selected_channel: Mutex<String>,
+    pub waveform: Mutex<Vec<i16>>,
 }
 
 impl AppState {
@@ -39,6 +40,7 @@ impl AppState {
             overruns: AtomicU64::new(0),
             selected_device: Mutex::new("mock_device".to_string()),
             selected_channel: Mutex::new("stereo".to_string()),
+            waveform: Mutex::new(vec![0; 128]),
         }
     }
 }

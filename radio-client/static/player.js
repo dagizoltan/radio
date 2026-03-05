@@ -5,77 +5,257 @@ class RadioPlayer extends HTMLElement {
 
         this.audioCtx = null;
         this.workletNode = null;
+        this.analyser = null;
         this.worker = null;
         this._releaseLock = null;
+        this.currentVolume = 1.0;
 
         this.shadowRoot.innerHTML = `
             <style>
+                @import url('https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700&display=swap');
+
                 :host {
                     display: block;
-                    padding: 20px;
-                    font-family: sans-serif;
+                    font-family: 'Outfit', sans-serif;
+                    color: #f8fafc;
                 }
-                button {
-                    padding: 10px 20px;
-                    font-size: 16px;
-                    cursor: pointer;
-                    border: 1px solid #ccc;
-                    border-radius: 4px;
-                    background: #f8f9fa;
-                    transition: background 0.2s, color 0.2s;
+
+                .player-card {
+                    max-width: 440px;
+                    margin: 40px auto;
+                    background: rgba(15, 23, 42, 0.7);
+                    backdrop-filter: blur(20px);
+                    border: 1px solid rgba(255, 255, 255, 0.1);
+                    border-radius: 32px;
+                    padding: 32px;
+                    box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.5);
+                    position: relative;
+                    overflow: hidden;
                 }
-                button:disabled {
-                    opacity: 0.6;
-                    cursor: not-allowed;
-                    background: #e9ecef;
+
+                .player-card::before {
+                    content: '';
+                    position: absolute;
+                    top: -50%;
+                    left: -50%;
+                    width: 200%;
+                    height: 200%;
+                    background: radial-gradient(circle at center, rgba(99, 102, 241, 0.08) 0%, transparent 50%);
+                    pointer-events: none;
                 }
-                button:hover:not(:disabled) {
-                    background: #e2e6ea;
+
+                .header {
+                    display: flex;
+                    justify-content: space-between;
+                    align-items: center;
+                    margin-bottom: 24px;
                 }
-                .controls-container {
+
+                .brand {
+                    font-weight: 700;
+                    font-size: 0.85rem;
+                    letter-spacing: 0.1em;
+                    text-transform: uppercase;
+                    color: #6366f1;
+                }
+
+                .live-badge {
+                    background: rgba(34, 197, 94, 0.1);
+                    color: #22c55e;
+                    border: 1px solid rgba(34, 197, 94, 0.2);
+                    padding: 4px 10px;
+                    border-radius: 50px;
+                    font-size: 0.7rem;
+                    font-weight: 700;
                     display: flex;
                     align-items: center;
-                    gap: 15px;
-                    margin-top: 15px;
-                    flex-wrap: wrap;
+                    gap: 6px;
                 }
-                .status {
-                    margin-top: 15px;
-                    color: #495057;
-                    font-size: 14px;
+
+                .live-badge .dot {
+                    width: 6px;
+                    height: 6px;
+                    background: #22c55e;
+                    border-radius: 50%;
+                    box-shadow: 0 0 10px #22c55e;
                 }
-                .buffering {
-                    animation: pulse 1.5s infinite;
+
+                .offline-badge {
+                    background: rgba(255, 255, 255, 0.05);
+                    color: #94a3b8;
+                    padding: 4px 10px;
+                    border-radius: 50px;
+                    font-size: 0.7rem;
+                    font-weight: 700;
                 }
-                @keyframes pulse {
-                    0% { opacity: 0.6; }
-                    50% { opacity: 1; }
-                    100% { opacity: 0.6; }
+
+                .visualizer-container {
+                    height: 80px;
+                    margin-bottom: 24px;
+                    display: flex;
+                    align-items: flex-end;
+                    justify-content: center;
+                    gap: 3px;
                 }
-                .overlay {
-                    display: none;
-                    position: fixed;
-                    top: 0; left: 0; right: 0; bottom: 0;
-                    background: rgba(0,0,0,0.8);
-                    color: white;
+
+                canvas {
+                    width: 100%;
+                    height: 100%;
+                }
+
+                .info {
+                    text-align: center;
+                    margin-bottom: 32px;
+                }
+
+                .title {
+                    font-size: 1.5rem;
+                    font-weight: 700;
+                    margin-bottom: 4px;
+                    background: linear-gradient(to right, #fff, #94a3b8);
+                    -webkit-background-clip: text;
+                    -webkit-text-fill-color: transparent;
+                }
+
+                .subtitle {
+                    font-size: 0.9rem;
+                    color: #94a3b8;
+                    font-weight: 500;
+                }
+
+                .controls {
+                    display: flex;
+                    flex-direction: column;
+                    gap: 24px;
+                }
+
+                .main-btns {
+                    display: flex;
                     align-items: center;
                     justify-content: center;
-                    z-index: 1000;
-                    font-size: 24px;
+                    gap: 24px;
+                }
+
+                .play-btn {
+                    width: 64px;
+                    height: 64px;
+                    border-radius: 50%;
+                    background: #6366f1;
+                    color: white;
+                    border: none;
                     cursor: pointer;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                    box-shadow: 0 10px 20px rgba(99, 102, 241, 0.4);
+                    transition: all 0.2s;
+                }
+
+                .play-btn:hover:not(:disabled) {
+                    transform: scale(1.05);
+                    background: #4f46e5;
+                }
+
+                .play-btn:disabled {
+                    background: #334155;
+                    box-shadow: none;
+                    cursor: not-allowed;
+                }
+
+                .play-btn svg { width: 28px; height: 28px; fill: currentColor; }
+
+                .volume-row {
+                    display: flex;
+                    align-items: center;
+                    gap: 16px;
+                }
+
+                .volume-slider {
+                    flex: 1;
+                    -webkit-appearance: none;
+                    background: rgba(255, 255, 255, 0.1);
+                    height: 4px;
+                    border-radius: 2px;
+                    outline: none;
+                }
+
+                .volume-slider::-webkit-slider-thumb {
+                    -webkit-appearance: none;
+                    width: 14px;
+                    height: 14px;
+                    background: #6366f1;
+                    border-radius: 50%;
+                    cursor: pointer;
+                    box-shadow: 0 0 10px rgba(99, 102, 241, 0.5);
+                }
+
+                .overlay {
+                    display: none;
+                    position: absolute;
+                    top: 0; left: 0; right: 0; bottom: 0;
+                    background: rgba(15, 23, 42, 0.9);
+                    z-index: 100;
+                    align-items: center;
+                    justify-content: center;
+                    text-align: center;
+                    padding: 20px;
+                    cursor: pointer;
+                    border-radius: 32px;
+                }
+
+                .status-text {
+                    font-size: 0.8rem;
+                    font-weight: 600;
+                    color: #6366f1;
+                    text-align: center;
+                    margin-top: 12px;
+                    letter-spacing: 0.05em;
                 }
             </style>
-            <div>
-                <button id="playBtn" disabled>Loading...</button>
-                <div class="status" id="status">Initializing</div>
-                <div class="overlay" id="unlockOverlay">Click anywhere to unlock audio</div>
+            
+            <div class="player-card">
+                <div class="header">
+                    <div class="brand">Antigravity Radio</div>
+                    <div id="statusBadge">
+                        <div class="offline-badge">LOADING</div>
+                    </div>
+                </div>
 
-                <div class="controls-container">
-                    <button id="muteBtn" disabled>Mute</button>
-                    <input type="range" id="volumeSlider" min="0" max="1" step="0.01" value="1" disabled>
+                <div class="visualizer-container">
+                    <canvas id="visualizer"></canvas>
+                </div>
+
+                <div class="info">
+                    <div class="title" id="trackTitle">Ready to stream</div>
+                    <div class="subtitle" id="trackInfo">Lossless Audio Pipeline</div>
+                </div>
+
+                <div class="controls">
+                    <div class="main-btns">
+                        <button class="play-btn" id="playBtn" disabled>
+                            <svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg>
+                        </button>
+                    </div>
+
+                    <div class="volume-row">
+                        <svg viewBox="0 0 24 24" width="20" height="20" fill="#94a3b8"><path d="M3 9v6h4l5 5V4L7 9H3zm13.5 3c0-1.77-1.02-3.29-2.5-4.03v8.05c1.48-.73 2.5-2.25 2.5-4.02zM14 3.23v2.06c2.89.86 5 3.54 5 6.71s-2.11 5.85-5 6.71v2.06c4.01-.91 7-4.49 7-8.77s-2.99-7.86-7-8.77z"/></svg>
+                        <input type="range" class="volume-slider" id="volumeSlider" min="0" max="1" step="0.01" value="1">
+                    </div>
+
+                    <div class="status-text" id="statusText">System Ready</div>
+                </div>
+
+                <div class="overlay" id="unlockOverlay">
+                    <div>
+                        <div style="font-size: 1.5rem; font-weight: 700; margin-bottom: 8px;">Tap to Connect</div>
+                        <div style="color: #94a3b8; font-size: 0.9rem;">Audio interaction required</div>
+                    </div>
                 </div>
             </div>
         `;
+
+        this.canvas = this.shadowRoot.getElementById('visualizer');
+        this.canvasCtx = this.canvas.getContext('2d');
     }
 
     async connectedCallback() {
@@ -85,279 +265,179 @@ class RadioPlayer extends HTMLElement {
         this.eventsUrl = this.getAttribute('data-events-url');
 
         this.playBtn = this.shadowRoot.getElementById('playBtn');
-        this.statusDiv = this.shadowRoot.getElementById('status');
+        this.statusBadge = this.shadowRoot.getElementById('statusBadge');
+        this.statusText = this.shadowRoot.getElementById('statusText');
         this.unlockOverlay = this.shadowRoot.getElementById('unlockOverlay');
-        this.muteBtn = this.shadowRoot.getElementById('muteBtn');
         this.volumeSlider = this.shadowRoot.getElementById('volumeSlider');
+        this.trackTitle = this.shadowRoot.getElementById('trackTitle');
 
         this.setupSSE();
 
         if (!this.isLive) {
-            this.playBtn.disabled = true;
-            this.statusDiv.textContent = 'Stream offline (Manifest unavailable)';
+            this.updateBadge('OFFLINE');
             return;
         }
 
-        // Init Worker
         this.worker = new Worker(new URL('./fetch_worker.js', import.meta.url), { type: 'module' });
-
         this.worker.onmessage = (e) => {
-            if (e.data.type === 'INIT_DONE') {
-                console.log("Worker initialized");
-            } else if (e.data.type === 'TOKEN_UPDATED') {
-                this.token = e.data.token;
-            } else if (e.data.type === 'STALE_MANIFEST') {
-                if (e.data.isStale && this.audioCtx && this.audioCtx.state === 'running') {
-                    this.statusDiv.textContent = 'Stream may be offline';
-                } else if (!e.data.isStale && this.audioCtx && this.audioCtx.state === 'running' && this.statusDiv.textContent === 'Stream may be offline') {
-                    this.statusDiv.textContent = 'Playing...';
+            if (e.data.type === 'TOKEN_UPDATED') this.token = e.data.token;
+            if (e.data.type === 'STALE_MANIFEST') {
+                if (e.data.isStale && this.audioCtx?.state === 'running') {
+                    this.statusText.textContent = 'Stream unstable...';
                 }
             }
         };
 
         this.worker.postMessage({ type: 'INIT', token: this.token, r2Url: this.r2Url });
 
-        // Multi-Tab Prevention
         navigator.locks.request("radio-player-singleton", async (lock) => {
             this.playBtn.disabled = false;
-            this.muteBtn.disabled = false;
-            this.volumeSlider.disabled = false;
-            this.playBtn.textContent = 'Play Lossless Radio';
-            this.statusDiv.textContent = 'Ready';
-
-            // Hold lock indefinitely
+            this.updateBadge('LIVE');
             await new Promise(r => this._releaseLock = r);
-        }).catch(err => {
-            // We ignore errors from lock rejection if any, but `locks.request` usually holds until acquired.
-            // If another tab has it, we just don't enable it automatically.
-            console.warn("Lock request error:", err);
         });
-
-        // Wait to see if we get the lock or if it's held by someone else
-        navigator.locks.query().then(state => {
-            const held = state.held.find(h => h.name === 'radio-player-singleton');
-            if (held) {
-                 // Simple approximation: If we haven't enabled it yet, assume it's transferred.
-                 if (this.playBtn.disabled) {
-                    this.playBtn.textContent = 'Playback transferred — Click Play';
-                    this.statusDiv.textContent = 'Another tab is playing audio.';
-                 }
-            }
-        });
-
 
         this.playBtn.addEventListener('click', () => this.togglePlay());
         this.unlockOverlay.addEventListener('click', () => this.unlockAudio());
-
-        // Volume controls handlers
         this.volumeSlider.addEventListener('input', (e) => this.setVolume(e.target.value));
-        this.muteBtn.addEventListener('click', () => this.toggleMute());
 
-        this.setupMediaSession();
+        this.resizeCanvas();
+        window.addEventListener('resize', () => this.resizeCanvas());
     }
 
-    setVolume(value) {
-        this.currentVolume = parseFloat(value);
-
-        // If adjusting volume while muted, automatically unmute.
-        if (this.muteBtn.textContent === 'Unmute') {
-            this.muteBtn.textContent = 'Mute';
-        }
-
-        if (this.workletNode) {
-            this.workletNode.port.postMessage({ type: 'SET_VOLUME', volume: this.currentVolume });
-        }
+    resizeCanvas() {
+        this.canvas.width = this.canvas.offsetWidth * window.devicePixelRatio;
+        this.canvas.height = this.canvas.offsetHeight * window.devicePixelRatio;
     }
 
-    toggleMute() {
-        if (this.muteBtn.textContent === 'Mute') {
-            this.muteBtn.textContent = 'Unmute';
-            if (this.workletNode) {
-                this.workletNode.port.postMessage({ type: 'SET_VOLUME', volume: 0 });
-            }
+    updateBadge(status) {
+        if (status === 'LIVE') {
+            this.statusBadge.innerHTML = '<div class="live-badge"><div class="dot"></div>LIVE</div>';
         } else {
-            this.muteBtn.textContent = 'Mute';
-            if (this.workletNode) {
-                this.workletNode.port.postMessage({ type: 'SET_VOLUME', volume: this.volumeSlider.value });
-            }
-        }
-    }
-
-    setupMediaSession() {
-        if ('mediaSession' in navigator) {
-            navigator.mediaSession.metadata = new MediaMetadata({
-                title: 'Lossless Web Radio',
-                artist: 'Live Stream',
-                album: 'Radio Server'
-            });
-
-            navigator.mediaSession.setActionHandler('play', () => {
-                if (!this.audioCtx || this.audioCtx.state === 'suspended') {
-                    if (this.playBtn.textContent === 'Stop') {
-                        // Internal state is playing, but audio context was suspended. Just resume.
-                        this.audioCtx.resume();
-                    } else {
-                        // Internal state is stopped, toggle play.
-                        this.togglePlay();
-                    }
-                }
-            });
-
-            navigator.mediaSession.setActionHandler('pause', () => {
-                if (this.audioCtx && this.audioCtx.state === 'running') {
-                    if (this.playBtn.textContent === 'Stop') {
-                        this.togglePlay();
-                    } else {
-                        this.audioCtx.suspend();
-                    }
-                }
-            });
-
-            navigator.mediaSession.setActionHandler('stop', () => {
-                if (this.audioCtx && this.audioCtx.state === 'running') {
-                    if (this.playBtn.textContent === 'Stop') {
-                        this.togglePlay();
-                    }
-                }
-            });
-        }
-    }
-
-    updateMediaSessionState(state) {
-        if ('mediaSession' in navigator) {
-            navigator.mediaSession.playbackState = state;
+            this.statusBadge.innerHTML = `<div class="offline-badge">${status}</div>`;
         }
     }
 
     setupSSE() {
         if (!this.eventsUrl) return;
         this.eventSource = new EventSource(this.eventsUrl);
-
         this.eventSource.onmessage = (event) => {
+            let msg = event.data;
+            if (msg === 'keepalive') return;
             try {
-                // Try parsing as JSON first, since we might pass JSON from the server
-                // Alternatively, backend might pass text strings. For robustness:
-                let msg = event.data;
-
-                // For this session, we assume the server sends now-playing text directly
-                // or we can parse if it's JSON.
-                let title = msg;
                 if (msg.startsWith('{')) {
                     const data = JSON.parse(msg);
-                    if (data.title) title = data.title;
-                }
-
-                if (title && title !== 'keepalive') {
-                    this.statusDiv.textContent = `Playing: ${title}`;
-                    this.statusDiv.classList.remove('buffering');
-
-                    if ('mediaSession' in navigator) {
-                        navigator.mediaSession.metadata = new MediaMetadata({
-                            title: title,
-                            artist: 'Live Stream',
-                            album: 'Radio Server'
-                        });
+                    if (data.type === 'metrics') {
+                        this.isLive = true;
+                        this.updateBadge('LIVE');
                     }
+                } else {
+                    this.trackTitle.textContent = msg;
+                    this.statusText.textContent = 'Now Playing';
                 }
-            } catch (err) {
-                console.error("Error processing SSE message:", err);
-            }
-        };
-
-        this.eventSource.onerror = (err) => {
-            console.warn("SSE Error, reconnecting...", err);
-            // EventSource auto-reconnects, so we don't strictly need to do anything
+            } catch (err) { }
         };
     }
 
     async togglePlay() {
         if (!this.audioCtx) {
-            // Must create and resume synchronously in click handler
             this.audioCtx = new AudioContext({ sampleRate: 48000 });
-            this.audioCtx.resume();
+            this.analyser = this.audioCtx.createAnalyser();
+            this.analyser.fftSize = 64;
+            this.analyser.connect(this.audioCtx.destination);
 
-            // iOS Interrupted State Handling
-            this.audioCtx.onstatechange = () => {
-                if ((this.audioCtx.state === 'suspended' || this.audioCtx.state === 'interrupted') && document.visibilityState === 'visible') {
-                    this.audioCtx.resume();
-                }
-                this.checkAudioState();
-            };
-
-            this.checkAudioState();
+            this.audioCtx.onstatechange = () => this.checkAudioState();
 
             try {
                 await this.audioCtx.audioWorklet.addModule('/static/worklet.js');
-                // The processor name 'radio-processor' must match what's registered in worklet.js
-                this.workletNode = new AudioWorkletNode(this.audioCtx, 'radio-processor', {
-                    outputChannelCount: [2]
-                });
-                this.workletNode.connect(this.audioCtx.destination);
+                this.workletNode = new AudioWorkletNode(this.audioCtx, 'radio-processor');
+                this.workletNode.connect(this.analyser);
 
-                this.workletNode.port.onmessage = (e) => {
-                    if (e.data.type === 'OVERFLOW') {
-                        console.warn("AudioWorklet Warning:", e.data.message);
-                    }
-                };
-
-                // Provide MessageChannel to worker for zero-copy transfers
-                // The worker will send Float32Array to port1, which will fire port2.onmessage here.
-                // We then forward that to the worklet node port.
                 const channel = new MessageChannel();
-
                 channel.port2.onmessage = (e) => {
-                    // Forward decoded PCM data to the AudioWorklet
                     this.workletNode.port.postMessage(e.data, [e.data.buffer]);
                 };
-
                 this.worker.postMessage({ type: 'PLAY', port: channel.port1 }, [channel.port1]);
 
+                this.renderVisualizer();
             } catch (err) {
-                this.statusDiv.textContent = 'Failed to load AudioWorklet: ' + err.message;
+                this.statusText.textContent = 'Hardware Error';
                 return;
-            }
-        } else {
-            if (this.audioCtx.state === 'running') {
-                this.audioCtx.suspend();
-                this.worker.postMessage({ type: 'STOP' });
-                this.playBtn.textContent = 'Play Lossless Radio';
-                this.statusDiv.textContent = 'Paused';
-                this.statusDiv.classList.remove('buffering');
-                this.updateMediaSessionState('paused');
-                return;
-            } else {
-                this.audioCtx.resume();
-                this.worker.postMessage({ type: 'PLAY' }); // Start fetching again
             }
         }
 
-        this.playBtn.textContent = 'Stop';
-        this.statusDiv.textContent = 'Playing...';
-        this.statusDiv.classList.add('buffering');
-        this.updateMediaSessionState('playing');
+        if (this.audioCtx.state === 'running') {
+            this.audioCtx.suspend();
+            this.worker.postMessage({ type: 'STOP' });
+            this.updatePlayState(false);
+        } else {
+            this.audioCtx.resume();
+            this.worker.postMessage({ type: 'PLAY' });
+            this.updatePlayState(true);
+        }
+    }
+
+    updatePlayState(isPlaying) {
+        const icon = this.shadowRoot.getElementById('playIcon');
+        if (isPlaying) {
+            icon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
+            this.statusText.textContent = 'Streaming Lossless';
+        } else {
+            icon.innerHTML = '<path d="M8 5v14l11-7z"/>';
+            this.statusText.textContent = 'Paused';
+        }
+    }
+
+    renderVisualizer() {
+        if (!this.analyser) return;
+        const bufferLength = this.analyser.frequencyBinCount;
+        const dataArray = new Uint8Array(bufferLength);
+
+        const draw = () => {
+            requestAnimationFrame(draw);
+            this.analyser.getByteFrequencyData(dataArray);
+
+            this.canvasCtx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+
+            const barWidth = (this.canvas.width / bufferLength) * 2;
+            let x = 0;
+
+            for (let i = 0; i < bufferLength; i++) {
+                const barHeight = (dataArray[i] / 255) * this.canvas.height;
+
+                const grad = this.canvasCtx.createLinearGradient(0, this.canvas.height, 0, 0);
+                grad.addColorStop(0, '#6366f1');
+                grad.addColorStop(1, '#a855f7');
+
+                this.canvasCtx.fillStyle = grad;
+                this.canvasCtx.roundRect(x, this.canvas.height - barHeight, barWidth - 4, barHeight, [4, 4, 0, 0]);
+                this.canvasCtx.fill();
+
+                x += barWidth;
+            }
+        };
+        draw();
+    }
+
+    setVolume(value) {
+        this.currentVolume = parseFloat(value);
+        if (this.workletNode) {
+            this.workletNode.port.postMessage({ type: 'SET_VOLUME', volume: this.currentVolume });
+        }
     }
 
     checkAudioState() {
-        if (this.audioCtx && this.audioCtx.state === 'suspended') {
-            this.unlockOverlay.style.display = 'flex';
-        } else {
-            this.unlockOverlay.style.display = 'none';
-        }
+        this.unlockOverlay.style.display = (this.audioCtx?.state === 'suspended') ? 'flex' : 'none';
     }
 
     unlockAudio() {
-        if (this.audioCtx) {
-            this.audioCtx.resume().then(() => {
-                this.unlockOverlay.style.display = 'none';
-            });
-        }
+        this.audioCtx?.resume();
     }
 
     disconnectedCallback() {
-        if (this.eventSource) this.eventSource.close();
-        if (this._releaseLock) this._releaseLock();
-        if (this.worker) this.worker.terminate();
-        if (this.audioCtx) this.audioCtx.close();
+        this.eventSource?.close();
+        this._releaseLock?.();
+        this.worker?.terminate();
+        this.audioCtx?.close();
     }
 }
 

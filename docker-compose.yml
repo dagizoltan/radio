@@ -10,16 +10,19 @@ services:
     volumes:
       - ./archive:/app/archive
       - ./recordings:/app/recordings
-    # Ensure Docker has access to ALSA host audio devices if needed.
-    # Note: On macOS this may not capture host audio directly,
-    # but the mock device logic should prevent crashes.
+      - /proc/asound:/host/asound:ro
+    # Pass through all ALSA sound device nodes from the host.
+    # Note: /dev/snd is bind-mounted; discovery.rs scans it for pcmC*D*c capture nodes.
     devices:
       - /dev/snd:/dev/snd
+      # Explicitly pass the Behringer UMC404HD (card 1, device 0, capture)
+      - /dev/snd/pcmC1D0c:/dev/snd/pcmC1D0c
     environment:
       - RUST_LOG=info
       - R2_ACCESS_KEY=minioadmin
       - R2_SECRET_KEY=minioadmin
       - R2_ENDPOINT=http://minio:9000
+      - R2_BUCKET=radio-archive
     depends_on:
       - minio
 
@@ -31,7 +34,7 @@ services:
       - "3000:3000"
     environment:
       - TOKEN_SECRET=super_secret_dev_token
-      - R2_PUBLIC_URL=http://radio-server:8080/manifest.json
+      - R2_PUBLIC_URL=http://minio:9000/radio-archive/manifest.json
       - PUBLIC_R2_URL=http://localhost:9000/radio-archive
       - PUBLIC_EVENTS_URL=http://localhost:8080/events
     depends_on:
@@ -52,9 +55,4 @@ services:
     depends_on:
       - minio
     entrypoint: >
-      /bin/sh -c "
-      sleep 5 &&
-      mc alias set myminio http://minio:9000 minioadmin minioadmin &&
-      mc mb myminio/radio-archive || true &&
-      mc anonymous set public myminio/radio-archive
-      "
+      /bin/sh -c " sleep 5 && mc alias set myminio http://minio:9000 minioadmin minioadmin && mc mb myminio/radio-archive || true && mc anonymous set public myminio/radio-archive "

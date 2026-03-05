@@ -1,23 +1,73 @@
 use std::fs;
+use std::collections::HashMap;
 
+/// Scan /dev/snd/ for capture PCM nodes (pcmC*D*c) and attempt to resolve
+/// human-readable card names from /proc/asound/cards when available.
 pub fn get_available_devices() -> Vec<(String, String)> {
     let mut devices = vec![("mock_device".to_string(), "Mock Device (Silence)".to_string())];
-    
-    if let Ok(cards) = fs::read_to_string("/proc/asound/cards") {
-        for line in cards.lines() {
-            // ALSA card lines look like: " 1 [UMC404HD       ]: USB-Audio - UMC404HD 192k"
-            if line.starts_with(' ') && line.contains('[') && line.contains(']') {
-                let parts: Vec<&str> = line.split('[').collect();
-                if parts.len() == 2 {
-                    let num_str = parts[0].trim();
-                    let name_str = parts[1].split(']').next().unwrap_or("Unknown").trim();
-                    let device_path = format!("/dev/snd/pcmC{}D0c", num_str);
-                    let device_label = format!("ALSA Card {} - {}", num_str, name_str);
-                    devices.push((device_path, device_label));
-                }
+
+    // Build a card-number → card-name map from /proc/asound/cards if accessible.
+    // This file is available on the host but not inside Docker containers.
+    let card_names = parse_asound_cards();
+
+    // Scan /dev/snd/ for capture device nodes: pcmC{card}D{dev}c
+    let snd_dir = "/dev/snd";
+    let Ok(entries) = fs::read_dir(snd_dir) else { return devices; };
+
+    let mut found: Vec<(String, String)> = entries
+        .filter_map(|entry| entry.ok())
+        .filter_map(|entry| {
+            let name = entry.file_name().to_string_lossy().to_string();
+            // Match pcmC<card>D<dev>c  (capture nodes end with 'c')
+            if !name.starts_with("pcmC") || !name.ends_with('c') {
+                return None;
             }
+            let path = format!("{}/{}", snd_dir, name);
+
+            // Parse card number from e.g. "pcmC1D0c"
+            let inner = name.strip_prefix("pcmC").unwrap_or(&name);
+            let card_str = inner.split('D').next().unwrap_or("?");
+            let card_num: u32 = card_str.parse().ok()?;
+            let dev_str = inner
+                .strip_prefix(card_str)
+                .and_then(|s| s.strip_prefix('D'))
+                .and_then(|s| s.strip_suffix('c'))
+                .unwrap_or("?");
+
+            let label = if let Some(card_name) = card_names.get(&card_num) {
+                format!("Card {} ({}) — Device {}", card_num, card_name, dev_str)
+            } else {
+                format!("Card {} — Device {} (PCM Capture)", card_num, dev_str)
+            };
+
+            Some((path, label))
+        })
+        .collect();
+
+    // Stable sort by path so the list is deterministic
+    found.sort_by(|a, b| a.0.cmp(&b.0));
+    devices.extend(found);
+    devices
+}
+
+/// Parse card info from /host/asound/cards (Docker) or /proc/asound/cards (host).
+/// Returns an empty map if neither file is accessible.
+fn parse_asound_cards() -> HashMap<u32, String> {
+    let mut map = HashMap::new();
+    let content = fs::read_to_string("/host/asound/cards")
+        .or_else(|_| fs::read_to_string("/proc/asound/cards"));
+    let Ok(content) = content else { return map; };
+
+    for line in content.lines() {
+        // Lines look like:  " 1 [U192k          ]: USB-Audio - UMC404HD 192k"
+        if !line.starts_with(' ') || !line.contains('[') { continue; }
+        let parts: Vec<&str> = line.splitn(2, '[').collect();
+        if parts.len() != 2 { continue; }
+        let num_str = parts[0].trim();
+        let name_str = parts[1].split(']').next().unwrap_or("?").trim();
+        if let Ok(n) = num_str.parse::<u32>() {
+            map.insert(n, name_str.to_string());
         }
     }
-    
-    devices
+    map
 }
