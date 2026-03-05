@@ -18,6 +18,7 @@ const EMA_ALPHA = 0.3; // Weight of the new measurement (0.0 to 1.0)
 const pool = [];
 
 let workletPort = null;
+let isFetching = false;
 
 onmessage = async (e) => {
     const msg = e.data;
@@ -35,6 +36,9 @@ onmessage = async (e) => {
         case 'PLAY':
             workletPort = msg.port;
             isPlaying = true;
+            if (!isFetching) {
+                fetchNextSegment();
+            }
             break;
         case 'STOP':
             isPlaying = false;
@@ -47,7 +51,7 @@ onmessage = async (e) => {
                     workletPort.postMessage('FLUSH');
                 }
                 currentIndex = latestIndex - bufferTarget; // Jump to new buffer target
-                if (isPlaying) {
+                if (isPlaying && !isFetching) {
                     fetchNextSegment();
                 }
             }
@@ -93,7 +97,7 @@ async function pollManifest() {
         console.error("Failed to fetch manifest:", err);
     }
 
-    if (isPlaying) {
+    if (isPlaying && !isFetching) {
         fetchNextSegment();
     } else {
         setTimeout(pollManifest, segmentLengthSec * 1000);
@@ -102,6 +106,9 @@ async function pollManifest() {
 
 async function fetchNextSegment() {
     if (!isPlaying) return;
+    if (isFetching) return;
+
+    isFetching = true;
 
     // Jump-Ahead / Rollover Logic
     // If we are way behind or sequence wrapped around (e.g., rollover at 100,000,000)
@@ -126,6 +133,7 @@ async function fetchNextSegment() {
         if (response.status === 403) {
             console.log("403 Forbidden, refreshing token...");
             await refreshToken();
+            isFetching = false;
             setTimeout(fetchNextSegment, 500); // Retry after refresh
             return;
         }
@@ -133,6 +141,7 @@ async function fetchNextSegment() {
         if (response.status === 404) {
             console.log(`404 Not Found: ${currentIndex}, repolling manifest...`);
             // 404 Infinite Loop Protection: Sleep for at least segment_s / 2
+            isFetching = false;
             setTimeout(pollManifest, (segmentLengthSec / 2) * 1000);
             return;
         }
@@ -180,6 +189,7 @@ async function fetchNextSegment() {
             currentIndex++;
             const fetchDuration = endTime - startTime;
             const timeToWait = Math.max(0, (segmentLengthSec * 1000) - fetchDuration - 500);
+            isFetching = false;
             setTimeout(fetchNextSegment, timeToWait);
             return;
         }
@@ -204,11 +214,13 @@ async function fetchNextSegment() {
         const fetchDuration = endTime - startTime;
         const timeToWait = Math.max(0, (segmentLengthSec * 1000) - fetchDuration - 500); // 500ms safety buffer
 
+        isFetching = false;
         setTimeout(fetchNextSegment, timeToWait);
 
     } catch (err) {
         console.error(`Error fetching segment ${currentIndex}:`, err);
         // On generic error, repoll manifest after delay
+        isFetching = false;
         setTimeout(pollManifest, (segmentLengthSec / 2) * 1000);
     }
 }
