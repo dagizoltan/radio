@@ -289,6 +289,7 @@
             flex: 1;
             padding-top: 10px;
             justify-content: center;
+            min-height: 150px;
         }
 
         .vu-section {
@@ -296,6 +297,7 @@
             gap: 8px;
             padding: 0 10px;
             border-right: 1px solid var(--border);
+            flex: 1;
         }
 
         .vu-section:last-child {
@@ -327,12 +329,13 @@
             border-radius: 50px;
             position: relative;
             overflow: hidden;
-            display: flex;
-            flex-direction: column-reverse;
             border: 1px solid var(--border);
         }
 
         .vu-bar {
+            position: absolute;
+            bottom: 0;
+            left: 0;
             width: 100%;
             height: 0%;
             background: linear-gradient(to top, #22c55e, #eab308 70%, #ef4444 90%);
@@ -455,10 +458,10 @@
             <div class="card-header"><span class="card-label">Levels</span></div>
             <div class="vu-container">
                 <div class="vu-section">
-                    <div>
+                    <div style="display: flex; flex-direction: column; flex: 1;">
                         <div class="vu-group-label">Input</div>
-                        <div style="display: flex; gap: 8px;">
-                            <div class="vu-column">
+                        <div style="display: flex; gap: 8px; flex: 1;">
+                            <div class="vu-column" style="flex: 1;">
                                 <div class="vu-track">
                                     <div id="vu-in-l" class="vu-bar"></div>
                                     <div id="peak-in-l" class="vu-peak"></div>
@@ -466,7 +469,7 @@
                                 <span class="db-label">L</span>
                                 <span id="db-in-l" class="db-label">-- dB</span>
                             </div>
-                            <div class="vu-column">
+                            <div class="vu-column" style="flex: 1;">
                                 <div class="vu-track">
                                     <div id="vu-in-r" class="vu-bar"></div>
                                     <div id="peak-in-r" class="vu-peak"></div>
@@ -478,10 +481,10 @@
                     </div>
                 </div>
                 <div class="vu-section">
-                    <div>
+                    <div style="display: flex; flex-direction: column; flex: 1;">
                         <div class="vu-group-label">Stream</div>
-                        <div style="display: flex; gap: 8px;">
-                            <div class="vu-column">
+                        <div style="display: flex; gap: 8px; flex: 1;">
+                            <div class="vu-column" style="flex: 1;">
                                 <div class="vu-track">
                                     <div id="vu-str-l" class="vu-bar" style="background: linear-gradient(to top, #6366f1, #a855f7);"></div>
                                     <div id="peak-str-l" class="vu-peak"></div>
@@ -489,7 +492,7 @@
                                 <span class="db-label">L</span>
                                 <span id="db-str-l" class="db-label">-- dB</span>
                             </div>
-                            <div class="vu-column">
+                            <div class="vu-column" style="flex: 1;">
                                 <div class="vu-track">
                                     <div id="vu-str-r" class="vu-bar" style="background: linear-gradient(to top, #6366f1, #a855f7);"></div>
                                     <div id="peak-str-r" class="vu-peak"></div>

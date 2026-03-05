@@ -77,11 +77,16 @@ impl Device {
                     set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_CHANNELS, ch, ch);
                     set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, period_size, period_size);
 
-                    // Allow hardware to determine the best buffer size and periods by leaving their intervals open
-                    // Set rmask for intervals to strictly enforce RATE, CHANNELS, and PERIOD_SIZE
+                    // Some external soundcards (like Behringer) require explicit buffer sizing constraints
+                    // or they'll fail with "Invalid argument" because they don't know how to allocate periods
+                    set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_BUFFER_SIZE, period_size * 4, period_size * 4);
+
+                    // Allow hardware to determine periods by leaving their intervals open
+                    // Set rmask for intervals to strictly enforce RATE, CHANNELS, PERIOD_SIZE, and BUFFER_SIZE
                     hw_params.rmask |= (1 << SNDRV_PCM_HW_PARAM_RATE) |
                                      (1 << SNDRV_PCM_HW_PARAM_CHANNELS) |
-                                     (1 << SNDRV_PCM_HW_PARAM_PERIOD_SIZE);
+                                     (1 << SNDRV_PCM_HW_PARAM_PERIOD_SIZE) |
+                                     (1 << SNDRV_PCM_HW_PARAM_BUFFER_SIZE);
 
                     let ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS as _, &mut hw_params) };
                     if ret >= 0 {
