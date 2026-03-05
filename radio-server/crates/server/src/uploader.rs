@@ -310,6 +310,7 @@ impl UploaderTask {
         headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
         headers.insert("Content-Type".to_string(), content_type.to_string());
         headers.insert("Cache-Control".to_string(), cache_control.to_string());
+        headers.insert("Content-Length".to_string(), body.len().to_string());
 
         let (auth_header, _) = generate_sigv4(
             "PUT",
@@ -331,6 +332,7 @@ impl UploaderTask {
             .header("Authorization", auth_header)
             .header("Content-Type", content_type)
             .header("Cache-Control", cache_control)
+            .header("Content-Length", body.len().to_string())
             .body(body);
 
         match req.send().await {
