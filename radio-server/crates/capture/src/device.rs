@@ -116,6 +116,18 @@ impl Device {
             return Err("Device fallback: does not support 48000 Hz".into());
         }
 
+        // Apply Software Parameters to ensure EPOLL wakes up `AsyncFd` correctly
+        let mut sw_params = SndrPcmSwParams::default();
+        sw_params.avail_min = actual_period_size;
+        sw_params.start_threshold = actual_period_size;
+        sw_params.stop_threshold = actual_period_size * 4; // Stop on overrun
+
+        let sw_ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS as _, &mut sw_params) };
+        if sw_ret < 0 {
+            println!("DEBUG: Failed to set SW_PARAMS (avail_min={})", actual_period_size);
+            // Non-fatal, fallback to ALSA defaults
+        }
+
         Ok(Device { fd, channels: actual_channels, actual_format, period_size: actual_period_size, _file: file })
     }
 

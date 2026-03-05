@@ -193,8 +193,22 @@ impl RecorderTask {
 
             // If we are not streaming, we don't encode or broadcast the audio data
             if !should_stream {
+                self.state.stream_vu_left.store(0, Ordering::Relaxed);
+                self.state.stream_vu_right.store(0, Ordering::Relaxed);
                 continue;
             }
+
+            // Calculate Stream VU after routing
+            let mut s_max_l = 0;
+            let mut s_max_r = 0;
+            for i in (0..pcm_data.len()).step_by(2) {
+                let l = pcm_data[i].abs();
+                let r = pcm_data[i+1].abs();
+                if l > s_max_l { s_max_l = l; }
+                if r > s_max_r { s_max_r = r; }
+            }
+            self.state.stream_vu_left.store(s_max_l, Ordering::Relaxed);
+            self.state.stream_vu_right.store(s_max_r, Ordering::Relaxed);
 
             // Need a rotation?
             if archive_file.is_none() || frames_in_file >= frames_per_hour {
