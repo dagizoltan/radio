@@ -319,16 +319,15 @@
             flex-direction: column;
             align-items: center;
             gap: 12px;
-            width: 40px;
+            width: 30px;
         }
 
         .vu-track {
-            width: 32px;
+            width: 8px;
             flex: 1;
             background: rgba(0, 0, 0, 0.3);
-            border-radius: 50px;
+            border-radius: 4px;
             position: relative;
-            overflow: hidden;
             border: 1px solid var(--border);
         }
 
@@ -339,7 +338,7 @@
             width: 100%;
             height: 0%;
             background: linear-gradient(to top, #22c55e, #eab308 70%, #ef4444 90%);
-            border-radius: 50px;
+            border-radius: 4px;
             transition: height 0.05s linear;
         }
 
@@ -348,8 +347,24 @@
             width: 100%;
             height: 2px;
             background: white;
-            box-shadow: 0 0 10px white;
+            box-shadow: 0 0 4px white;
             z-index: 10;
+        }
+
+        .vu-scale {
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+            align-items: center;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.55rem;
+            color: var(--muted);
+            padding: 0 4px;
+            margin-bottom: 40px; /* offset for labels beneath track */
+        }
+
+        .vu-scale span {
+            position: relative;
         }
 
         .db-label {
@@ -460,7 +475,7 @@
                 <div class="vu-section">
                     <div style="display: flex; flex-direction: column; flex: 1;">
                         <div class="vu-group-label">Input</div>
-                        <div style="display: flex; gap: 8px; flex: 1;">
+                        <div style="display: flex; gap: 4px; flex: 1;">
                             <div class="vu-column" style="flex: 1;">
                                 <div class="vu-track">
                                     <div id="vu-in-l" class="vu-bar"></div>
@@ -468,6 +483,13 @@
                                 </div>
                                 <span class="db-label">L</span>
                                 <span id="db-in-l" class="db-label">-- dB</span>
+                            </div>
+                            <div class="vu-scale">
+                                <span> 0</span>
+                                <span>-12</span>
+                                <span>-24</span>
+                                <span>-36</span>
+                                <span>-48</span>
                             </div>
                             <div class="vu-column" style="flex: 1;">
                                 <div class="vu-track">
@@ -483,7 +505,7 @@
                 <div class="vu-section">
                     <div style="display: flex; flex-direction: column; flex: 1;">
                         <div class="vu-group-label">Stream</div>
-                        <div style="display: flex; gap: 8px; flex: 1;">
+                        <div style="display: flex; gap: 4px; flex: 1;">
                             <div class="vu-column" style="flex: 1;">
                                 <div class="vu-track">
                                     <div id="vu-str-l" class="vu-bar" style="background: linear-gradient(to top, #6366f1, #a855f7);"></div>
@@ -491,6 +513,13 @@
                                 </div>
                                 <span class="db-label">L</span>
                                 <span id="db-str-l" class="db-label">-- dB</span>
+                            </div>
+                            <div class="vu-scale">
+                                <span> 0</span>
+                                <span>-12</span>
+                                <span>-24</span>
+                                <span>-36</span>
+                                <span>-48</span>
                             </div>
                             <div class="vu-column" style="flex: 1;">
                                 <div class="vu-track">
