@@ -43,6 +43,8 @@ impl RecorderTask {
         let mut frames_in_file = 0u64;
         let mut file_frame_number = 0u64;
         let frames_per_hour = 48000 * 60 * 60; // 172,800,000 frames
+
+        let mut mock_phase_frames: u64 = 0;
         let mut last_debug_log = std::time::Instant::now();
 
         loop {
@@ -75,7 +77,7 @@ impl RecorderTask {
                     match Device::open(&desired_device) {
                         Ok(device) => {
                             device.prepare();
-                            match CaptureLoop::new(device.raw_fd(), device.channels(), device.format()) {
+                            match CaptureLoop::new(device.raw_fd(), device.channels(), device.format(), device.period_size()) {
                                 Ok(cl) => {
                                     capture_loop = Some(cl);
                                     current_device_path = desired_device;
@@ -118,8 +120,25 @@ impl RecorderTask {
             } else {
                 // Mock device loop: Wait ~85ms for 4096 samples at 48kHz
                 tokio::time::sleep(std::time::Duration::from_millis(85)).await;
-                let silence = vec![0i32; 8192]; // 4096 frames * 2 channels
-                (silence, false)
+
+                let mut mock_data = vec![0i32; 8192];
+                // Generate a 440 Hz sine wave, modulated by a slow 2Hz LFO for realistic VU meter movement
+                let sample_rate = 48000.0;
+                let freq = 440.0;
+                let lfo_freq = 2.0;
+                let mut time_val = (mock_phase_frames as f64) / sample_rate;
+                let base_amplitude = 838860.0; // Moderate amplitude for 24-bit range
+
+                for i in 0..4096 {
+                    let lfo = ((time_val * lfo_freq * 2.0 * std::f64::consts::PI).sin() * 0.5) + 0.5; // Oscillates 0.0 to 1.0
+                    let val = (time_val * freq * 2.0 * std::f64::consts::PI).sin() * (base_amplitude * lfo);
+                    mock_data[i * 2] = val as i32;     // Left
+                    mock_data[i * 2 + 1] = val as i32; // Right
+                    time_val += 1.0 / sample_rate;
+                }
+                mock_phase_frames += 4096;
+
+                (mock_data, false)
             };
 
             if overrun {
@@ -177,8 +196,22 @@ impl RecorderTask {
 
             // If we are not streaming, we don't encode or broadcast the audio data
             if !should_stream {
+                self.state.stream_vu_left.store(0, Ordering::Relaxed);
+                self.state.stream_vu_right.store(0, Ordering::Relaxed);
                 continue;
             }
+
+            // Calculate Stream VU after routing
+            let mut s_max_l = 0;
+            let mut s_max_r = 0;
+            for i in (0..pcm_data.len()).step_by(2) {
+                let l = pcm_data[i].abs();
+                let r = pcm_data[i+1].abs();
+                if l > s_max_l { s_max_l = l; }
+                if r > s_max_r { s_max_r = r; }
+            }
+            self.state.stream_vu_left.store(s_max_l, Ordering::Relaxed);
+            self.state.stream_vu_right.store(s_max_r, Ordering::Relaxed);
 
             // Need a rotation?
             if archive_file.is_none() || frames_in_file >= frames_per_hour {

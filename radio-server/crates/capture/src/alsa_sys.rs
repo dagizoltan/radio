@@ -105,3 +105,27 @@ pub const SNDRV_PCM_FORMAT_S24_LE: u32 = 6;
 pub const SNDRV_PCM_FORMAT_S32_LE: u32 = 10;
 pub const SNDRV_PCM_FORMAT_S24_3LE: u32 = 32;
 pub const SNDRV_PCM_ACCESS_RW_INTERLEAVED: u32 = 3;
+pub const SNDRV_PCM_IOCTL_START: usize = 0x4142;
+
+#[repr(C)]
+pub struct SndrPcmSwParams {
+    pub tstamp_mode: i32,
+    pub avail_min: u32,
+    pub period_step: u32,
+    pub start_threshold: u32,
+    pub stop_threshold: u32,
+    pub silence_threshold: u32,
+    pub silence_size: u32,
+    pub boundary: u32,
+    pub proto: u32,
+    pub tstamp_type: u32,
+    pub reserved: [u8; 56],
+}
+
+impl Default for SndrPcmSwParams {
+    fn default() -> Self {
+        unsafe { std::mem::zeroed() }
+    }
+}
+
+pub const SNDRV_PCM_IOCTL_SW_PARAMS: usize = 0xc0884113;

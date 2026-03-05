@@ -7,6 +7,7 @@ pub struct Device {
     fd: RawFd,
     channels: u32,
     actual_format: u32,
+    period_size: u32,
     _file: std::fs::File,
 }
 
@@ -21,10 +22,10 @@ impl Device {
 
         let fd = file.as_raw_fd();
 
-        let set_interval = |params: &mut SndrPcmHwParams, param_idx: usize, val: u32| {
+        let set_interval = |params: &mut SndrPcmHwParams, param_idx: usize, min_val: u32, max_val: u32| {
             let idx = param_idx - 8;
-            params.intervals[idx].min = val;
-            params.intervals[idx].max = val;
+            params.intervals[idx].min = min_val;
+            params.intervals[idx].max = max_val;
             params.intervals[idx].flags = 0; // inclusive range
         };
 
@@ -39,57 +40,69 @@ impl Device {
         let mut success = false;
         let mut actual_format = 0;
         let mut actual_channels = 0;
+        let mut actual_period_size = 0;
         let mut final_hw_params = SndrPcmHwParams::default();
 
         for &fmt in &formats_to_try {
-            for &ch in &[2, 4] {
-                let mut hw_params = SndrPcmHwParams::default();
+            for &ch in &[4, 2, 8, 1] { // Prioritize 4 channels for UMC404HD, fallback to 2, 8, 1
+                // Behringer devices often demand very specific period sizes based on sample rate.
+                // We'll also try a wildcard buffer sizing if explicit period sizes fail.
+                for &period_size in &[4096, 2048, 1024, 512, 256, 128] {
+                    let mut hw_params = SndrPcmHwParams::default();
 
-                // 1. Constrain ACCESS (Interleaved)
-                hw_params.masks[0].bits[0] = 1 << SNDRV_PCM_ACCESS_RW_INTERLEAVED;
-                
-                // 2. Constrain FORMAT
-                let fmt_idx = (fmt / 32) as usize;
-                let fmt_bit = fmt % 32;
-                hw_params.masks[1].bits[fmt_idx] = 1 << fmt_bit;
+                    // 1. Constrain ACCESS (Interleaved)
+                    hw_params.masks[0].bits[0] = 1 << SNDRV_PCM_ACCESS_RW_INTERLEAVED;
 
-                // 3. Constrain SUBFORMAT (Standard)
-                hw_params.masks[2].bits[0] = 1 << 0; // SUBFORMAT_STD
+                    // 2. Constrain FORMAT
+                    let fmt_idx = (fmt / 32) as usize;
+                    let fmt_bit = fmt % 32;
+                    hw_params.masks[1].bits[fmt_idx] = 1 << fmt_bit;
 
-                // 4. Set rmask for masks
-                hw_params.rmask |= (1 << SNDRV_PCM_HW_PARAM_ACCESS) | 
-                                 (1 << SNDRV_PCM_HW_PARAM_FORMAT) | 
-                                 (1 << SNDRV_PCM_HW_PARAM_SUBFORMAT);
+                    // 3. Constrain SUBFORMAT (Standard)
+                    hw_params.masks[2].bits[0] = 1 << 0; // SUBFORMAT_STD
 
-                // Initialize all intervals to [0, u32::MAX]
-                for iv in hw_params.intervals.iter_mut() {
-                    iv.min = 0; iv.max = u32::MAX;
-                    iv.flags = 0;
+                    // 4. Set rmask for masks
+                    hw_params.rmask |= (1 << SNDRV_PCM_HW_PARAM_ACCESS) |
+                                     (1 << SNDRV_PCM_HW_PARAM_FORMAT) |
+                                     (1 << SNDRV_PCM_HW_PARAM_SUBFORMAT);
+
+                    // Initialize all intervals to [0, u32::MAX]
+                    for iv in hw_params.intervals.iter_mut() {
+                        iv.min = 0; iv.max = u32::MAX;
+                        iv.flags = 0;
+                    }
+
+                    // Strict intervals (min == max)
+                    set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_RATE, 48000, 48000);
+                    set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_CHANNELS, ch, ch);
+                    set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, period_size, period_size);
+
+                    // Some external soundcards (like Behringer) require explicit buffer sizing constraints
+                    // or they'll fail with "Invalid argument" because they don't know how to allocate periods
+                    set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_BUFFER_SIZE, period_size * 4, period_size * 4);
+
+                    // Allow hardware to determine periods by leaving their intervals open
+                    // Set rmask for intervals to strictly enforce RATE, CHANNELS, PERIOD_SIZE, and BUFFER_SIZE
+                    hw_params.rmask |= (1 << SNDRV_PCM_HW_PARAM_RATE) |
+                                     (1 << SNDRV_PCM_HW_PARAM_CHANNELS) |
+                                     (1 << SNDRV_PCM_HW_PARAM_PERIOD_SIZE) |
+                                     (1 << SNDRV_PCM_HW_PARAM_BUFFER_SIZE);
+
+                    let ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS as _, &mut hw_params) };
+                    if ret >= 0 {
+                        success = true;
+                        actual_format = fmt;
+                        actual_channels = ch;
+                        actual_period_size = period_size;
+                        final_hw_params = hw_params;
+                        println!("SUCCESS: Set HW_PARAMS (format={}, channels={}, period_size={})", fmt, ch, period_size);
+                        break;
+                    } else {
+                        let err = std::io::Error::last_os_error();
+                        println!("DEBUG: Failed HW_PARAMS (format={}, channels={}, period_size={}) -> err: {}", fmt, ch, period_size, err);
+                    }
                 }
-
-                set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_RATE, 48000);
-                set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_CHANNELS, ch);
-                set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIOD_SIZE, 4096);
-                set_interval(&mut hw_params, SNDRV_PCM_HW_PARAM_PERIODS, 4);
-
-                // Set rmask for intervals
-                hw_params.rmask |= (1 << SNDRV_PCM_HW_PARAM_RATE) |
-                                 (1 << SNDRV_PCM_HW_PARAM_CHANNELS) |
-                                 (1 << SNDRV_PCM_HW_PARAM_PERIOD_SIZE) |
-                                 (1 << SNDRV_PCM_HW_PARAM_PERIODS);
-
-                let ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_HW_PARAMS as _, &mut hw_params) };
-                if ret >= 0 {
-                    success = true;
-                    actual_format = fmt;
-                    actual_channels = ch;
-                    final_hw_params = hw_params;
-                    println!("SUCCESS: Set HW_PARAMS (format={}, channels={})", fmt, ch);
-                    break;
-                } else {
-                    let err = std::io::Error::last_os_error();
-                    println!("DEBUG: Failed HW_PARAMS (format={}, channels={}) -> err: {}", fmt, ch, err);
-                }
+                if success { break; }
             }
             if success { break; }
         }
@@ -108,13 +121,30 @@ impl Device {
             return Err("Device fallback: does not support 48000 Hz".into());
         }
 
-        Ok(Device { fd, channels: actual_channels, actual_format, _file: file })
+        // Apply Software Parameters to ensure EPOLL wakes up `AsyncFd` correctly
+        let mut sw_params = SndrPcmSwParams::default();
+        sw_params.avail_min = actual_period_size;
+        sw_params.start_threshold = actual_period_size;
+        sw_params.stop_threshold = actual_period_size * 4; // Stop on overrun
+
+        let sw_ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS as _, &mut sw_params) };
+        if sw_ret < 0 {
+            println!("DEBUG: Failed to set SW_PARAMS (avail_min={})", actual_period_size);
+            // Non-fatal, fallback to ALSA defaults
+        }
+
+        Ok(Device { fd, channels: actual_channels, actual_format, period_size: actual_period_size, _file: file })
     }
 
     pub fn prepare(&self) {
         let ret = unsafe { ioctl(self.fd, SNDRV_PCM_IOCTL_PREPARE as _) };
         if ret < 0 {
             eprintln!("Failed to PREPARE device");
+        }
+
+        let start_ret = unsafe { ioctl(self.fd, SNDRV_PCM_IOCTL_START as _) };
+        if start_ret < 0 {
+            eprintln!("Failed to START device capture stream");
         }
     }
 
@@ -128,6 +158,10 @@ impl Device {
 
     pub fn format(&self) -> u32 {
         self.actual_format
+    }
+
+    pub fn period_size(&self) -> u32 {
+        self.period_size
     }
 }
 
