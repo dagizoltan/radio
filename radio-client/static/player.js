@@ -136,6 +136,18 @@ class RadioPlayer extends HTMLElement {
                     gap: 24px;
                 }
 
+                .quality-select {
+                    background: rgba(255,255,255,0.05);
+                    border: 1px solid rgba(255,255,255,0.1);
+                    color: #94a3b8;
+                    font-family: inherit;
+                    font-size: 0.75rem;
+                    padding: 4px 8px;
+                    border-radius: 8px;
+                    cursor: pointer;
+                    outline: none;
+                }
+
                 .play-btn {
                     width: 64px;
                     height: 64px;
@@ -235,6 +247,11 @@ class RadioPlayer extends HTMLElement {
                         <button class="play-btn" id="playBtn" disabled>
                             <svg viewBox="0 0 24 24" id="playIcon"><path d="M8 5v14l11-7z"/></svg>
                         </button>
+                        <select class="quality-select" id="qualitySelect">
+                            <option value="auto">Auto</option>
+                            <option value="hq">High (FLAC)</option>
+                            <option value="lq">Low (FLAC)</option>
+                        </select>
                     </div>
 
                     <div class="volume-row">
@@ -270,8 +287,10 @@ class RadioPlayer extends HTMLElement {
         this.unlockOverlay = this.shadowRoot.getElementById('unlockOverlay');
         this.volumeSlider = this.shadowRoot.getElementById('volumeSlider');
         this.trackTitle = this.shadowRoot.getElementById('trackTitle');
+        this.qualitySelect = this.shadowRoot.getElementById('qualitySelect');
 
         this.setupSSE();
+        this.setupMediaSession();
 
         if (!this.isLive) {
             this.updateBadge('OFFLINE');
@@ -286,9 +305,16 @@ class RadioPlayer extends HTMLElement {
                     this.statusText.textContent = 'Stream unstable...';
                 }
             }
+            if (e.data.type === 'RECONNECTING') {
+                this.statusText.textContent = 'Reconnecting...';
+            }
         };
 
         this.worker.postMessage({ type: 'INIT', token: this.token, r2Url: this.r2Url });
+
+        this.qualitySelect.addEventListener('change', (e) => {
+            this.worker.postMessage({ type: 'SET_QUALITY', quality: e.target.value });
+        });
 
         navigator.locks.request("radio-player-singleton", async (lock) => {
             this.playBtn.disabled = false;
@@ -333,9 +359,29 @@ class RadioPlayer extends HTMLElement {
                 } else {
                     this.trackTitle.textContent = msg;
                     this.statusText.textContent = 'Now Playing';
+                    this.updateMediaSessionMetadata(msg);
                 }
             } catch (err) { }
         };
+    }
+
+    setupMediaSession() {
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.playbackState = 'none';
+            navigator.mediaSession.setActionHandler('play', () => this.togglePlay());
+            navigator.mediaSession.setActionHandler('pause', () => this.togglePlay());
+            this.updateMediaSessionMetadata("Ready to stream");
+        }
+    }
+
+    updateMediaSessionMetadata(title) {
+        if ('mediaSession' in navigator) {
+            navigator.mediaSession.metadata = new MediaMetadata({
+                title: title,
+                artist: 'Antigravity Radio',
+                album: 'Live Lossless Broadcast'
+            });
+        }
     }
 
     async togglePlay() {
@@ -383,9 +429,11 @@ class RadioPlayer extends HTMLElement {
         if (isPlaying) {
             icon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
             this.statusText.textContent = 'Streaming Lossless';
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
         } else {
             icon.innerHTML = '<path d="M8 5v14l11-7z"/>';
             this.statusText.textContent = 'Paused';
+            if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
         }
     }
 

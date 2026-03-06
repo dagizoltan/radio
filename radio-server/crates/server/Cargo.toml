@@ -4,6 +4,8 @@ version = "0.1.0"
 edition = "2021"
 
 [dependencies]
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 capture = { path = "../capture" }
 encoder = { path = "../encoder" }
 tokio = { version = "1.0", features = ["full"] }

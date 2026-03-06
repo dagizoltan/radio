@@ -556,40 +556,61 @@
 
         <div class="glass-card metrics-card">
             <div class="card-header"><span class="card-label">System Telemetry</span></div>
-            <div class="metrics-grid">
-                <div class="metric-box">
-                    <div class="card-label">Recording Time</div>
-                    <div id="m-time" class="metric-value">00:00</div>
+
+            <div style="display: grid; grid-template-columns: 2fr 1fr; gap: 20px; margin-bottom: 20px;">
+                <div class="metrics-grid" style="grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));">
+                    <div class="metric-box">
+                        <div class="card-label">Recording Time</div>
+                        <div id="m-time" class="metric-value">00:00</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="card-label">Current File</div>
+                        <div id="m-file" class="metric-value" style="font-size: 0.9rem; word-break: break-all;">-</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="card-label">Active segment</div>
+                        <div id="m-segment" class="metric-value">0</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="card-label">Throughput / Size</div>
+                        <div id="m-size" class="metric-value">0.0 MB</div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="card-label">Buffer Health</div>
+                        <div id="m-overruns" class="metric-value" style="display: flex; align-items: center; gap: 8px;">
+                            <div id="m-health-dot" style="width: 10px; height: 10px; border-radius: 50%; background: var(--green);"></div>
+                            <span id="m-overruns-val">0</span>
+                        </div>
+                    </div>
+                    <div class="metric-box">
+                        <div class="card-label">S3 Status</div>
+                        <div id="m-upload" class="metric-value" style="color: var(--muted)">IDLE</div>
+                    </div>
                 </div>
-                <div class="metric-box">
-                    <div class="card-label">Current File</div>
-                    <div id="m-file" class="metric-value" style="font-size: 0.9rem; word-break: break-all;">-</div>
-                </div>
-                <div class="metric-box">
-                    <div class="card-label">Active segment</div>
-                    <div id="m-segment" class="metric-value">0</div>
-                </div>
-                <div class="metric-box">
-                    <div class="card-label">Throughput / Size</div>
-                    <div id="m-size" class="metric-value">0.0 MB</div>
-                </div>
-                <div class="metric-box">
-                    <div class="card-label">Buffer Health</div>
-                    <div id="m-overruns" class="metric-value">0</div>
-                </div>
-                <div class="metric-box">
-                    <div class="card-label">S3 Status</div>
-                    <div id="m-upload" class="metric-value" style="color: var(--muted)">IDLE</div>
+                <div class="metric-box" style="display: flex; flex-direction: column;">
+                    <div class="card-label" style="margin-bottom: 10px;">Bandwidth History</div>
+                    <div style="position: relative; flex: 1; min-height: 120px;">
+                        <canvas id="bwChart"></canvas>
+                    </div>
                 </div>
             </div>
 
             <div class="events-panel">
-                <div class="card-header"><span class="card-label">Audit Log</span></div>
+                <div class="card-header" style="margin-bottom: 12px;">
+                    <span class="card-label">Audit Log</span>
+                    <div style="display: flex; gap: 8px;">
+                        <button class="btn" style="padding: 4px 8px; font-size: 0.7rem;" onclick="filterLogs('all')">All</button>
+                        <button class="btn" style="padding: 4px 8px; font-size: 0.7rem;" onclick="filterLogs('info')">Info</button>
+                        <button class="btn" style="padding: 4px 8px; font-size: 0.7rem; color: var(--red);" onclick="filterLogs('error')">Errors</button>
+                        <button class="btn" style="padding: 4px 8px; font-size: 0.7rem;" onclick="clearLogs()">Clear</button>
+                    </div>
+                </div>
                 <div id="logs"></div>
             </div>
         </div>
     </main>
 
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
     <script>
         const canvas = document.getElementById('waveformCanvas');
         const ctx = canvas.getContext('2d');
@@ -599,6 +620,68 @@
         let peakInL = -Infinity, peakInR = -Infinity;
         let peakStrL = -Infinity, peakStrR = -Infinity;
         let pTimerInL, pTimerInR, pTimerStrL, pTimerStrR;
+
+        // Chart.js Setup
+        const bwCtx = document.getElementById('bwChart').getContext('2d');
+        const bwChart = new Chart(bwCtx, {
+            type: 'line',
+            data: {
+                labels: Array(30).fill(''),
+                datasets: [{
+                    label: 'Throughput (MB)',
+                    data: Array(30).fill(0),
+                    borderColor: '#6366f1',
+                    backgroundColor: 'rgba(99, 102, 241, 0.1)',
+                    borderWidth: 2,
+                    fill: true,
+                    tension: 0.4,
+                    pointRadius: 0
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                animation: false,
+                scales: {
+                    x: { display: false },
+                    y: {
+                        display: true,
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                        ticks: { color: '#94a3b8', font: { size: 10, family: 'JetBrains Mono' } }
+                    }
+                },
+                plugins: { legend: { display: false } }
+            }
+        });
+
+        let lastBytes = 0;
+        setInterval(() => {
+            if (!document.getElementById('streaming-badge').className.includes('live')) return;
+            const currentBytes = window.currentRecordingBytes || 0;
+            const diffMB = (currentBytes - lastBytes) / 1024 / 1024;
+            if (currentBytes < lastBytes) { lastBytes = currentBytes; return; } // Reset on new file
+
+            const data = bwChart.data.datasets[0].data;
+            data.push(diffMB > 0 ? diffMB : 0);
+            data.shift();
+            bwChart.update();
+            lastBytes = currentBytes;
+        }, 1000);
+
+        let currentLogFilter = 'all';
+        function filterLogs(type) {
+            currentLogFilter = type;
+            const logs = document.getElementById('logs').childNodes;
+            logs.forEach(log => {
+                if (type === 'all') log.style.display = 'block';
+                else if (type === 'error') log.style.display = log.classList.contains('log-err') ? 'block' : 'none';
+                else if (type === 'info') log.style.display = log.classList.contains('log-err') ? 'none' : 'block';
+            });
+        }
+        function clearLogs() {
+            document.getElementById('logs').innerHTML = '';
+        }
 
         function resizeCanvas() {
             canvas.width = canvas.offsetWidth * window.devicePixelRatio;
@@ -704,9 +787,21 @@
                 document.getElementById('m-file').textContent = fileName;
 
                 document.getElementById('m-segment').textContent = data.r2_segment;
+                window.currentRecordingBytes = data.recording_bytes;
                 document.getElementById('m-size').textContent = (data.recording_bytes / 1024 / 1024).toFixed(1) + ' MB';
-                document.getElementById('m-overruns').textContent = data.overruns;
-                document.getElementById('m-overruns').style.color = data.overruns > 0 ? 'var(--red)' : 'var(--text)';
+
+                document.getElementById('m-overruns-val').textContent = data.overruns;
+                const healthDot = document.getElementById('m-health-dot');
+                if (data.overruns === 0) {
+                    healthDot.style.background = 'var(--green)';
+                    healthDot.style.boxShadow = '0 0 10px var(--green)';
+                } else if (data.overruns < 5) {
+                    healthDot.style.background = 'var(--yellow)';
+                    healthDot.style.boxShadow = '0 0 10px var(--yellow)';
+                } else {
+                    healthDot.style.background = 'var(--red)';
+                    healthDot.style.boxShadow = '0 0 10px var(--red)';
+                }
 
                 const up = document.getElementById('m-upload');
                 up.textContent = data.uploading ? 'UPLOADING...' : 'IDLE';
@@ -721,8 +816,13 @@
                 line.className = 'log-line' + (data.error ? ' log-err' : '');
                 const ts = new Date().toLocaleTimeString();
                 line.innerHTML = `<span class="log-ts">[${ts}]</span> ${data.message}`;
+
+                // Apply current filter
+                if (currentLogFilter === 'error' && !data.error) line.style.display = 'none';
+                if (currentLogFilter === 'info' && data.error) line.style.display = 'none';
+
                 logs.prepend(line);
-                if (logs.childNodes.length > 100) logs.lastChild.remove();
+                if (logs.childNodes.length > 200) logs.lastChild.remove();
             }
         };
 

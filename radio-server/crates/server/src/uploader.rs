@@ -143,7 +143,7 @@ impl UploaderTask {
                                     {
                                         if let Ok(idx) = idx_str.parse::<u64>() {
                                             if idx < max_index {
-                                                println!("Would delete old S3 segment: {}", key);
+                                                tracing::info!("Would delete old S3 segment: {}", key);
                                             }
                                         }
                                     }
@@ -345,7 +345,7 @@ impl UploaderTask {
                 } else if resp.status().as_u16() == 403 {
                     let xml = resp.text().await.unwrap_or_default();
                     if xml.contains("RequestTimeTooSkewed") {
-                        println!("FATAL: NTP Clock drift detected");
+                        tracing::error!("FATAL: NTP Clock drift detected");
                     }
                     Err(())
                 } else {

@@ -47,7 +47,7 @@ impl CaptureLoop {
 
                 if errno == EPIPE {
                     // XRUN Recovery
-                    eprintln!("WARN: ALSA buffer overrun (EPIPE)");
+                    tracing::error!("WARN: ALSA buffer overrun (EPIPE)");
 
                     // Synthesize a zero-padded stereo buffer
                     let silence = vec![0i32; 8192];
@@ -61,7 +61,7 @@ impl CaptureLoop {
                     guard.clear_ready();
                     continue;
                 } else if errno == ENODEV {
-                    eprintln!("FATAL: Device disconnected mid-stream");
+                    tracing::error!("FATAL: Device disconnected mid-stream");
                     return Err(err);
                 } else {
                     return Err(err);

@@ -123,7 +123,7 @@ impl RecorderTask {
                         current_device_path = String::new();
                         // Instead of continuing and skipping the whole processing, we should
                         // emit some mock data for this frame to avoid UI freezing.
-                        let mut mock_data = vec![0i32; 8192];
+                        let mock_data = vec![0i32; 8192];
                         (mock_data, false)
                     }
                 }
@@ -264,7 +264,7 @@ impl RecorderTask {
             // Send ARC wrapper to ConverterTask
             let arc_pcm = Arc::new(pcm_data);
             if let Err(_) = self.pcm_tx.try_send(arc_pcm) {
-                eprintln!("WARN: pcm_tx full, dropping PCM block to prevent block loop");
+                tracing::error!("WARN: pcm_tx full, dropping PCM block to prevent block loop");
             }
         }
     }

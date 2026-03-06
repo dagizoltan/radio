@@ -96,7 +96,7 @@ impl Device {
                                 actual_period_size = period_size;
                                 actual_rate = rate;
                                 final_hw_params = hw_params;
-                                println!("SUCCESS: Set HW_PARAMS (format={}, rate={}, channels={}, period_size={}, strict_buffer={})", fmt, rate, ch, period_size, strict_buffer);
+                                tracing::info!("SUCCESS: Set HW_PARAMS (format={}, rate={}, channels={}, period_size={}, strict_buffer={})", fmt, rate, ch, period_size, strict_buffer);
                                 break;
                             }
                         }
@@ -134,7 +134,7 @@ impl Device {
 
         let sw_ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS as _, &mut sw_params) };
         if sw_ret < 0 {
-            println!("DEBUG: Failed to set SW_PARAMS (avail_min={})", actual_period_size);
+            tracing::debug!("DEBUG: Failed to set SW_PARAMS (avail_min={})", actual_period_size);
             // Non-fatal, fallback to ALSA defaults
         }
 
@@ -144,13 +144,13 @@ impl Device {
     pub fn prepare(&self) {
         let ret = unsafe { ioctl(self.fd, SNDRV_PCM_IOCTL_PREPARE as _) };
         if ret < 0 {
-            eprintln!("Failed to PREPARE device");
+            tracing::error!("Failed to PREPARE device");
         }
 
         // Auto-start is preferred, but explicitly start as a fallback
         let start_ret = unsafe { ioctl(self.fd, SNDRV_PCM_IOCTL_START as _) };
         if start_ret < 0 {
-            eprintln!("Failed to START device capture stream");
+            tracing::error!("Failed to START device capture stream");
         }
     }
 

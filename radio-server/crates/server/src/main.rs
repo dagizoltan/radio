@@ -11,6 +11,10 @@ use std::path::PathBuf;
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    tracing_subscriber::fmt()
+        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env().add_directive("info".parse().unwrap()))
+        .init();
+
     let state = Arc::new(AppState::new());
     let token = CancellationToken::new();
 
@@ -26,7 +30,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     let recorder_handle = tokio::spawn(async move {
         if let Err(e) = recorder.run().await {
-            eprintln!("Recorder error: {:?}", e);
+            tracing::error!("Recorder error: {:?}", e);
         }
     });
 
@@ -84,10 +88,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     tokio::select! {
         _ = sigterm.recv() => {
-            println!("Received SIGTERM, shutting down...");
+            tracing::info!("Received SIGTERM, shutting down...");
         }
         _ = sigint.recv() => {
-            println!("Received SIGINT, shutting down...");
+            tracing::info!("Received SIGINT, shutting down...");
         }
     }
 
@@ -100,7 +104,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     }).await;
 
     if result.is_err() {
-        eprintln!("Shutdown timed out after 25 seconds, forcefully aborting...");
+        tracing::error!("Shutdown timed out after 25 seconds, forcefully aborting...");
         std::process::exit(1);
     }
 

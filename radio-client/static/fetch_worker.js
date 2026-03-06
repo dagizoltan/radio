@@ -3,9 +3,11 @@ import { LosslessDecoder } from './decoder.js';
 let decoder = new LosslessDecoder();
 let isInitialized = false;
 let isPlaying = false;
+let autoQuality = true;
 let quality = 'hq'; // 'hq' or 'lq'
 let token = null;
 let r2Url = null;
+let errorCount = 0;
 
 let currentIndex = 0;
 let latestIndex = 0;
@@ -46,8 +48,16 @@ onmessage = async (e) => {
             isPlaying = false;
             break;
         case 'SET_QUALITY':
-            if (quality !== msg.quality) {
-                quality = msg.quality;
+            let targetQuality = msg.quality;
+            if (targetQuality === 'auto') {
+                autoQuality = true;
+                targetQuality = bandwidthEma && bandwidthEma < 800000 ? 'lq' : 'hq';
+            } else {
+                autoQuality = false;
+            }
+
+            if (quality !== targetQuality) {
+                quality = targetQuality;
                 decoder.reset();
                 if (workletPort) {
                     workletPort.postMessage('FLUSH');
@@ -159,6 +169,8 @@ async function fetchNextSegment() {
         const bytes_downloaded = arrayBuffer.byteLength;
         const time_taken_ms = endTime - startTime;
 
+        errorCount = 0; // reset errors on success
+
         if (time_taken_ms > 0) {
             const bandwidth_bps = (bytes_downloaded * 8) / (time_taken_ms / 1000);
 
@@ -179,6 +191,23 @@ async function fetchNextSegment() {
                 bufferTarget = 4;
             } else {
                 bufferTarget = 2; // Default
+            }
+
+            // Auto quality fallback
+            if (autoQuality) {
+                if (quality === 'hq' && bandwidthEma < 800000) {
+                    console.log("Auto-switching to LQ due to low bandwidth");
+                    quality = 'lq';
+                    decoder.reset();
+                    if (workletPort) workletPort.postMessage('FLUSH');
+                    currentIndex = latestIndex - bufferTarget;
+                } else if (quality === 'lq' && bandwidthEma > 1500000) {
+                    console.log("Auto-switching to HQ due to good bandwidth");
+                    quality = 'hq';
+                    decoder.reset();
+                    if (workletPort) workletPort.postMessage('FLUSH');
+                    currentIndex = latestIndex - bufferTarget;
+                }
             }
         }
 
@@ -221,6 +250,10 @@ async function fetchNextSegment() {
 
     } catch (err) {
         console.error(`Error fetching segment ${currentIndex}:`, err);
+        errorCount++;
+        if (errorCount > 2) {
+            postMessage({ type: 'RECONNECTING' });
+        }
         // On generic error, repoll manifest after delay
         isFetching = false;
         setTimeout(pollManifest, (segmentLengthSec / 2) * 1000);

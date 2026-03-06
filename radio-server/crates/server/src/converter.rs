@@ -82,7 +82,7 @@ impl ConverterTask {
                 let lq_bytes = Bytes::copy_from_slice(&self.lq_accumulator);
 
                 if let Err(_) = self.seg_tx.try_send((self.segment_index, hq_bytes, lq_bytes)) {
-                    eprintln!("WARN: seg_tx full, dropping segment {}", self.segment_index);
+                    tracing::error!("WARN: seg_tx full, dropping segment {}", self.segment_index);
                 }
 
                 self.hq_accumulator.clear();

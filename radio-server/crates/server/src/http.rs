@@ -34,7 +34,7 @@ pub async fn run_server(state: Arc<AppState>, token: CancellationToken) {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind("0.0.0.0:8080").await.unwrap();
-    println!("Monitor UI listening on http://0.0.0.0:8080");
+    tracing::info!("Monitor UI listening on http://0.0.0.0:8080");
 
     axum::serve(listener, app)
         .with_graceful_shutdown(async move {
@@ -122,7 +122,8 @@ async fn stop_stream(State(state): State<Arc<AppState>>) -> StatusCode {
 async fn metrics_handler(State(state): State<Arc<AppState>>) -> String {
     // Prometheus format
     let overruns = state.overruns.load(std::sync::atomic::Ordering::Relaxed);
-    let put_latency = 0.0; // Replace with actual metrics if tracked
+    let put_latency = 0.0; // Hardcoded for now until full metric struct is injected
+    let rec_bytes = state.recording_bytes.load(std::sync::atomic::Ordering::Relaxed);
 
     format!(
         "# HELP radio_capture_overruns_total Total ALSA capture buffer overruns.\n\
@@ -130,9 +131,13 @@ async fn metrics_handler(State(state): State<Arc<AppState>>) -> String {
          radio_capture_overruns_total {}\n\
          # HELP radio_s3_put_latency_seconds Latency of S3 PUT requests.\n\
          # TYPE radio_s3_put_latency_seconds summary\n\
-         radio_s3_put_latency_seconds {}\n",
+         radio_s3_put_latency_seconds {}\n\
+         # HELP radio_recording_bytes_total Current local archive file size in bytes.\n\
+         # TYPE radio_recording_bytes_total gauge\n\
+         radio_recording_bytes_total {}\n",
         overruns,
-        put_latency
+        put_latency,
+        rec_bytes
     )
 }
 
