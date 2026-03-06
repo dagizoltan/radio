@@ -90,12 +90,14 @@ impl FlacEncoder {
         bw.write_bits(header_crc as u64, 8);
 
         // Subframes
+        let num_frames = std::cmp::min(self.block_size as usize, interleaved.len() / self.channels as usize);
+
         for channel in 0..self.channels as usize {
             // Subframe header: 0b00000010 (verbatim, no wasted bits)
             bw.write_bits(0b00000010, 8);
 
             // Raw samples byte-aligned.
-            for i in 0..self.block_size as usize {
+            for i in 0..num_frames {
                 // interleaved: L R L R
                 let sample = interleaved[i * self.channels as usize + channel];
 
@@ -104,6 +106,15 @@ impl FlacEncoder {
                     bw.write_bits((sample & 0xFFFFFF) as u64, 24);
                 } else if self.bps == 16 {
                     bw.write_bits((sample & 0xFFFF) as u64, 16);
+                }
+            }
+
+            // Pad the rest of the block with zeros if we ran out of frames
+            for _ in num_frames..self.block_size as usize {
+                if self.bps == 24 {
+                    bw.write_bits(0, 24);
+                } else if self.bps == 16 {
+                    bw.write_bits(0, 16);
                 }
             }
         }

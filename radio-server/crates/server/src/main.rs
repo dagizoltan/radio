@@ -72,8 +72,11 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
                 .unwrap_or_else(|e| e.into_inner()).clone();
             
             let wf = {
-                let wf_lock = metrics_state.waveform.lock().unwrap();
-                wf_lock.clone()
+                let mut wf_lock = metrics_state.waveform.lock().unwrap();
+                let current_wf = wf_lock.clone();
+                // Clear the waveform after reading to prevent stale data
+                wf_lock.fill(0);
+                current_wf
             };
 
             let msg = serde_json::json!({

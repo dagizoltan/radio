@@ -18,9 +18,11 @@ const EMA_ALPHA = 0.3; // Weight of the new measurement (0.0 to 1.0)
 
 // Buffer Pool for Zero-Copy transfers
 const pool = [];
+const MAX_POOL_SIZE = 10;
 
 let workletPort = null;
 let isFetching = false;
+let consecutive403s = 0;
 
 onmessage = async (e) => {
     const msg = e.data;
@@ -41,7 +43,9 @@ onmessage = async (e) => {
                 workletPort.onmessage = (event) => {
                     const data = event.data;
                     if (data && data.type === 'RETURN_BUFFER') {
-                        pool.push(new Float32Array(data.buffer));
+                        if (pool.length < MAX_POOL_SIZE) {
+                            pool.push(new Float32Array(data.buffer));
+                        }
                     }
                 };
             }
@@ -53,7 +57,7 @@ onmessage = async (e) => {
         case 'STOP':
             isPlaying = false;
             break;
-        case 'SET_QUALITY':
+        case 'SET_QUALITY': {
             let targetQuality = msg.quality;
             if (targetQuality === 'auto') {
                 autoQuality = true;
@@ -74,6 +78,7 @@ onmessage = async (e) => {
                 }
             }
             break;
+        }
         case 'TOKEN_UPDATE':
             token = msg.token;
             break;
@@ -150,11 +155,20 @@ async function fetchNextSegment() {
 
         if (response.status === 403) {
             console.log("403 Forbidden, refreshing token...");
+            consecutive403s++;
+            if (consecutive403s > 3) {
+                console.error("Too many 403s, pausing playback.");
+                postMessage({ type: 'RECONNECTING' });
+                isPlaying = false;
+                isFetching = false;
+                return;
+            }
             await refreshToken();
             isFetching = false;
-            setTimeout(fetchNextSegment, 500); // Retry after refresh
+            setTimeout(fetchNextSegment, 1000 * consecutive403s); // Exponential backoff
             return;
         }
+        consecutive403s = 0; // reset on success or non-403 error
 
         if (response.status === 404) {
             console.log(`404 Not Found: ${currentIndex}, repolling manifest...`);

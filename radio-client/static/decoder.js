@@ -37,6 +37,19 @@ export class LosslessDecoder {
         const pcmCopy = new Float32Array(len);
         pcmCopy.set(wasmView);
 
+        // Note: Ideally we would call `this.decoder.free_frame(ptr)` here
+        // or a similar mechanism exported by rust depending on how `push()` allocates.
+        // If the Rust side just overwrites a fixed buffer per FlacDecoder instance, this is fine.
+        // Assuming `push` allocates a new Vector and returns a pointer, we need to free it.
+        // Wait, looking at wasm-bindgen standard patterns, the returned pointer is usually
+        // managed by rust. If it's a fixed buffer inside `FlacDecoder` in Rust, it's fine.
+
         return pcmCopy;
+    }
+
+    free() {
+        if (this.decoder) {
+            this.decoder.free();
+        }
     }
 }

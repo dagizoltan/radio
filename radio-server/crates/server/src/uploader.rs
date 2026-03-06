@@ -41,6 +41,7 @@ impl UploaderTask {
         let client = Client::builder()
             .connect_timeout(Duration::from_secs(2))
             .timeout(Duration::from_secs(8))
+            .pool_idle_timeout(Duration::from_secs(30))
             .build()
             .unwrap();
 
@@ -91,68 +92,97 @@ impl UploaderTask {
 
         let prefixes = ["live/hq/", "live/lq/"];
         for prefix in prefixes {
-            let uri = if bucket_prefix.is_empty() { "/".to_string() } else { bucket_prefix.clone() };
-            let query = format!("prefix={}", prefix);
+            let mut continuation_token = String::new();
 
-            let url = format!("{}{}?{}", endpoint, uri, query);
+            loop {
+                let uri = if bucket_prefix.is_empty() { "/".to_string() } else { bucket_prefix.clone() };
 
-            let now = OffsetDateTime::now_utc();
-            let amz_date = format!(
-                "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
-                now.year(), now.month() as u8, now.day(),
-                now.hour(), now.minute(), now.second()
-            );
-            let date_stamp = format!("{:04}{:02}{:02}", now.year(), now.month() as u8, now.day());
-            let payload_hash = hex::encode(Sha256::digest(b""));
+                // SigV4 requires query parameters to be sorted alphabetically by key.
+                // Keys: continuation-token, list-type, prefix
+                let mut query = String::new();
+                if !continuation_token.is_empty() {
+                    let encoded_token = urlencoding::encode(&continuation_token);
+                    query.push_str(&format!("continuation-token={}&", encoded_token));
+                }
+                query.push_str(&format!("list-type=2&prefix={}", prefix));
 
-            let mut headers = BTreeMap::new();
-            let host = url.replace("https://", "").replace("http://", "").split('/').next().unwrap_or("").to_string();
-            headers.insert("Host".to_string(), host);
-            headers.insert("x-amz-date".to_string(), amz_date.clone());
-            headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+                let url = format!("{}{}?{}", endpoint, uri, query);
 
-            let (auth_header, _) = generate_sigv4(
-                "GET",
-                &uri,
-                &query,
-                &headers,
-                &payload_hash,
-                &access_key,
-                &secret_key,
-                "us-east-1",
-                "s3",
-                &amz_date,
-                &date_stamp,
-            );
+                let now = OffsetDateTime::now_utc();
+                let amz_date = format!(
+                    "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+                    now.year(), now.month() as u8, now.day(),
+                    now.hour(), now.minute(), now.second()
+                );
+                let date_stamp = format!("{:04}{:02}{:02}", now.year(), now.month() as u8, now.day());
+                let payload_hash = hex::encode(Sha256::digest(b""));
 
-            let req = client.get(&url)
-                .header("x-amz-date", &amz_date)
-                .header("x-amz-content-sha256", payload_hash)
-                .header("Authorization", auth_header);
+                let mut headers = BTreeMap::new();
+                let host = url.replace("https://", "").replace("http://", "").split('/').next().unwrap_or("").to_string();
+                headers.insert("Host".to_string(), host);
+                headers.insert("x-amz-date".to_string(), amz_date.clone());
+                headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
 
-            if let Ok(resp) = req.send().await {
-                if let Ok(xml_str) = resp.text().await {
-                    if let Ok(doc) = roxmltree::Document::parse(&xml_str) {
-                        for node in doc.descendants() {
-                            if node.has_tag_name("Key") {
-                                if let Some(key) = node.text() {
-                                    // Parse index from "live/hq/segment-123.flac"
-                                    if let Some(idx_str) = key.strip_prefix(prefix)
-                                        .and_then(|s| s.strip_prefix("segment-"))
-                                        .and_then(|s| s.strip_suffix(".flac"))
-                                    {
-                                        if let Ok(idx) = idx_str.parse::<u64>() {
-                                            if idx < max_index {
-                                                // Actually delete
-                                                tracing::info!("Deleting old S3 segment: {}", key);
-                                                Self::delete_s3_segment_static(&client, &bucket_prefix, prefix, idx).await;
+                let (auth_header, _) = generate_sigv4(
+                    "GET",
+                    &uri,
+                    &query,
+                    &headers,
+                    &payload_hash,
+                    &access_key,
+                    &secret_key,
+                    "us-east-1",
+                    "s3",
+                    &amz_date,
+                    &date_stamp,
+                );
+
+                let req = client.get(&url)
+                    .header("x-amz-date", &amz_date)
+                    .header("x-amz-content-sha256", payload_hash)
+                    .header("Authorization", auth_header);
+
+                let mut next_token = None;
+                let mut has_more = false;
+
+                if let Ok(resp) = req.send().await {
+                    if let Ok(xml_str) = resp.text().await {
+                        if let Ok(doc) = roxmltree::Document::parse(&xml_str) {
+                            for node in doc.descendants() {
+                                if node.has_tag_name("Key") {
+                                    if let Some(key) = node.text() {
+                                        // Parse index from "live/hq/segment-123.flac"
+                                        if let Some(idx_str) = key.strip_prefix(prefix)
+                                            .and_then(|s| s.strip_prefix("segment-"))
+                                            .and_then(|s| s.strip_suffix(".flac"))
+                                        {
+                                            if let Ok(idx) = idx_str.parse::<u64>() {
+                                                if idx < max_index {
+                                                    // Actually delete
+                                                    tracing::info!("Deleting old S3 segment: {}", key);
+                                                    Self::delete_s3_segment_static(&client, &bucket_prefix, prefix, idx).await;
+                                                }
                                             }
                                         }
+                                    }
+                                } else if node.has_tag_name("NextContinuationToken") {
+                                    if let Some(token) = node.text() {
+                                        next_token = Some(token.to_string());
+                                    }
+                                } else if node.has_tag_name("IsTruncated") {
+                                    if let Some(text) = node.text() {
+                                        has_more = text == "true";
                                     }
                                 }
                             }
                         }
                     }
+                }
+
+                if has_more && next_token.is_some() {
+                    continuation_token = next_token.unwrap();
+                } else {
+                    break;
                 }
             }
         }
@@ -277,11 +307,20 @@ impl UploaderTask {
 
             // Update State
             self.window.push_back(index);
-            if self.window.len() > 10 {
-                if let Some(oldest) = self.window.pop_front() {
+            while self.window.len() > 10 {
+                if let Some(oldest) = self.window.front().copied() {
                     // issue S3 DELETE for oldest
-                    self.delete_s3_segment("hq", oldest).await;
-                    self.delete_s3_segment("lq", oldest).await;
+                    let hq_del = self.delete_s3_segment("hq", oldest).await;
+                    let lq_del = self.delete_s3_segment("lq", oldest).await;
+
+                    if hq_del && lq_del {
+                        self.window.pop_front();
+                    } else {
+                        // Keep it in window so we try again next time
+                        break;
+                    }
+                } else {
+                    break;
                 }
             }
 
@@ -315,9 +354,16 @@ impl UploaderTask {
             if attempt > 0 {
                 tokio::time::sleep(Duration::from_millis(500 * (1 << (attempt - 1)))).await;
             }
-            if let Ok(true) = self.put_s3(&uri, body.clone(), content_type, "public, max-age=31536000, immutable").await {
-                let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Uploaded {uri} ({} bytes)"}}"#, body.len()));
-                return true;
+            match self.put_s3(&uri, body.clone(), content_type, "public, max-age=31536000, immutable").await {
+                Ok(true) => {
+                    let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Uploaded {uri} ({} bytes)"}}"#, body.len()));
+                    return true;
+                }
+                Err(true) => {
+                    // Fatal error, don't retry
+                    return false;
+                }
+                _ => {} // Retry
             }
         }
         false
@@ -332,14 +378,17 @@ impl UploaderTask {
             let bucket_prefix = if bucket.is_empty() { String::new() } else { format!("/{bucket}") };
             let uri = format!("{bucket_prefix}/manifest.json");
             
-            if let Ok(true) = self.put_s3(&uri, body.clone(), "application/json", "no-store, max-age=0").await {
-                return true;
+            match self.put_s3(&uri, body.clone(), "application/json", "no-store, max-age=0").await {
+                Ok(true) => return true,
+                Err(true) => return false, // Fatal
+                _ => {} // Retry
             }
         }
         false
     }
 
-    async fn put_s3(&self, uri: &str, body: Vec<u8>, content_type: &str, cache_control: &str) -> Result<bool, ()> {
+    // Returns Result<bool, bool> where Err(true) is a fatal error that shouldn't be retried
+    async fn put_s3(&self, uri: &str, body: Vec<u8>, content_type: &str, cache_control: &str) -> Result<bool, bool> {
         let access_key = std::env::var("R2_ACCESS_KEY").unwrap_or_else(|_| "test_access".to_string());
         let secret_key = std::env::var("R2_SECRET_KEY").unwrap_or_else(|_| "test_secret".to_string());
         let endpoint = std::env::var("R2_ENDPOINT").unwrap_or_else(|_| "https://test.s3.amazonaws.com".to_string());
@@ -394,22 +443,23 @@ impl UploaderTask {
                     Ok(true)
                 } else if resp.status().as_u16() == 503 {
                     // 503 Slow Down
-                    Err(())
+                    Err(false)
                 } else if resp.status().as_u16() == 403 {
                     let xml = resp.text().await.unwrap_or_default();
                     if xml.contains("RequestTimeTooSkewed") {
                         tracing::error!("FATAL: NTP Clock drift detected");
+                        return Err(true); // Don't retry if time is skewed
                     }
-                    Err(())
+                    Err(false)
                 } else {
-                    Err(())
+                    Err(false)
                 }
             },
-            Err(_) => Err(()),
+            Err(_) => Err(false),
         }
     }
 
-    async fn delete_s3_segment(&self, quality: &str, index: u64) {
+    async fn delete_s3_segment(&self, quality: &str, index: u64) -> bool {
         let bucket = std::env::var("R2_BUCKET").unwrap_or_else(|_| "".to_string());
         let bucket_prefix = if bucket.is_empty() { String::new() } else { format!("/{bucket}") };
         let uri = format!("{bucket_prefix}/live/{quality}/segment-{index:08}.flac");
@@ -455,7 +505,11 @@ impl UploaderTask {
             .header("x-amz-content-sha256", payload_hash)
             .header("Authorization", auth_header);
 
-        let _ = req.send().await;
+        if let Ok(resp) = req.send().await {
+            resp.status().is_success()
+        } else {
+            false
+        }
     }
 }
 

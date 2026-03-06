@@ -62,17 +62,21 @@ impl ConverterTask {
             for i in (0..pcm_arc.len()).step_by(4) {
                 if i + 3 < pcm_arc.len() {
                     // Simple low-pass filter (averaging adjacent samples)
-                    let l1 = pcm_arc[i];
-                    let r1 = pcm_arc[i + 1];
-                    let l2 = pcm_arc[i + 2];
-                    let r2 = pcm_arc[i + 3];
+                    // Ensure proper arithmetic by doing i64 to prevent overflow
+                    let l1 = pcm_arc[i] as i64;
+                    let r1 = pcm_arc[i + 1] as i64;
+                    let l2 = pcm_arc[i + 2] as i64;
+                    let r2 = pcm_arc[i + 3] as i64;
 
-                    // average and convert 24-bit to 16-bit
-                    let l_avg = (l1 / 2) + (l2 / 2);
-                    let r_avg = (r1 / 2) + (r2 / 2);
+                    // Average in i64, then convert to 16-bit by shifting
+                    // A 24-bit sample is +/- 8,388,608.
+                    // Shifting by 8 bits truncates to 16-bit.
+                    let l_avg = (l1 + l2) / 2;
+                    let r_avg = (r1 + r2) / 2;
 
-                    lq_staging.push(l_avg >> 8);
-                    lq_staging.push(r_avg >> 8);
+                    // Shift arithmetic on negative numbers maintains sign
+                    lq_staging.push((l_avg >> 8) as i32);
+                    lq_staging.push((r_avg >> 8) as i32);
                 }
             }
 
@@ -122,39 +126,39 @@ mod tests {
 
         for i in (0..input.len()).step_by(4) {
             if i + 3 < input.len() {
-                let l1 = input[i];
-                let r1 = input[i + 1];
-                let l2 = input[i + 2];
-                let r2 = input[i + 3];
+                let l1 = input[i] as i64;
+                let r1 = input[i + 1] as i64;
+                let l2 = input[i + 2] as i64;
+                let r2 = input[i + 3] as i64;
 
-                let l_avg = (l1 / 2) + (l2 / 2);
-                let r_avg = (r1 / 2) + (r2 / 2);
+                let l_avg = (l1 + l2) / 2;
+                let r_avg = (r1 + r2) / 2;
 
-                lq_staging.push(l_avg >> 8);
-                lq_staging.push(r_avg >> 8);
+                lq_staging.push((l_avg >> 8) as i32);
+                lq_staging.push((r_avg >> 8) as i32);
             }
         }
 
-        assert_eq!(lq_staging, vec![((100 / 2) + (300 / 2)) >> 8, ((200 / 2) + (400 / 2)) >> 8]);
+        assert_eq!(lq_staging, vec![((100 + 300) / 2) >> 8, ((200 + 400) / 2) >> 8]);
 
         // Verify negative numbers sign-extend properly
         let neg_input = vec![-32768, -1000, 0, 0];
         let mut lq_staging_neg = Vec::new();
         for i in (0..neg_input.len()).step_by(4) {
             if i + 3 < neg_input.len() {
-                let l1 = neg_input[i];
-                let r1 = neg_input[i + 1];
-                let l2 = neg_input[i + 2];
-                let r2 = neg_input[i + 3];
+                let l1 = neg_input[i] as i64;
+                let r1 = neg_input[i + 1] as i64;
+                let l2 = neg_input[i + 2] as i64;
+                let r2 = neg_input[i + 3] as i64;
 
-                let l_avg = (l1 / 2) + (l2 / 2);
-                let r_avg = (r1 / 2) + (r2 / 2);
+                let l_avg = (l1 + l2) / 2;
+                let r_avg = (r1 + r2) / 2;
 
-                lq_staging_neg.push(l_avg >> 8);
-                lq_staging_neg.push(r_avg >> 8);
+                lq_staging_neg.push((l_avg >> 8) as i32);
+                lq_staging_neg.push((r_avg >> 8) as i32);
             }
         }
-        assert_eq!(lq_staging_neg, vec![((-32768 / 2) + (0 / 2)) >> 8, ((-1000 / 2) + (0 / 2)) >> 8]);
+        assert_eq!(lq_staging_neg, vec![((-32768 + 0) / 2) >> 8, ((-1000 + 0) / 2) >> 8]);
     }
 
     #[test]

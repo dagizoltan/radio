@@ -316,6 +316,8 @@ class RadioPlayer extends HTMLElement {
             if (e.data.type === 'STALE_MANIFEST') {
                 if (e.data.isStale && this.audioCtx?.state === 'running') {
                     this.statusText.textContent = 'Stream unstable...';
+                } else if (!e.data.isStale && this.audioCtx?.state === 'running') {
+                    this.statusText.textContent = 'Streaming Lossless';
                 }
             }
             if (e.data.type === 'RECONNECTING') {
@@ -331,10 +333,12 @@ class RadioPlayer extends HTMLElement {
             }
         });
 
+        // Let the user interact first
         navigator.locks.request("radio-player-singleton", async (lock) => {
             this.playBtn.disabled = false;
             this.updateBadge('LIVE');
             await new Promise(r => this._releaseLock = r);
+            this.playBtn.disabled = true;
         });
     }
 
@@ -397,7 +401,14 @@ class RadioPlayer extends HTMLElement {
 
     async togglePlay() {
         if (!this.audioCtx) {
+            // AudioContext is created directly here in the click handler
             this.audioCtx = new AudioContext({ sampleRate: 48000 });
+
+            // To ensure it is running
+            if (this.audioCtx.state === 'suspended') {
+                await this.audioCtx.resume();
+            }
+
             this.analyser = this.audioCtx.createAnalyser();
             this.analyser.fftSize = 64;
             this.analyser.connect(this.audioCtx.destination);
