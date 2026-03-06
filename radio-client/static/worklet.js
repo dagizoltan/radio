@@ -48,6 +48,9 @@ class RadioProcessor extends AudioWorkletProcessor {
                     this.writePointer = (this.writePointer + 1) % this.RING_BUFFER_SIZE;
                 }
                 this.samplesAvailable += chunk.length;
+
+                // Return buffer to pool
+                this.port.postMessage({ type: "RETURN_BUFFER", buffer: chunk.buffer }, [chunk.buffer]);
             }
         };
     }

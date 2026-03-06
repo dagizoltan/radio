@@ -12,7 +12,7 @@ let errorCount = 0;
 let currentIndex = 0;
 let latestIndex = 0;
 let bufferTarget = 2; // Default pre-roll: latest - 2
-let segmentLengthSec = 5;
+let segmentLengthSec = 10.24;
 let bandwidthEma = null; // Exponential Moving Average of bandwidth
 const EMA_ALPHA = 0.3; // Weight of the new measurement (0.0 to 1.0)
 
@@ -38,6 +38,12 @@ onmessage = async (e) => {
         case 'PLAY':
             if (msg.port) {
                 workletPort = msg.port;
+                workletPort.onmessage = (event) => {
+                    const data = event.data;
+                    if (data && data.type === 'RETURN_BUFFER') {
+                        pool.push(new Float32Array(data.buffer));
+                    }
+                };
             }
             isPlaying = true;
             if (!isFetching) {

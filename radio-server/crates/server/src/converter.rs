@@ -60,12 +60,19 @@ impl ConverterTask {
             // Decimate to LQ (24000 Hz)
             lq_staging.clear();
             for i in (0..pcm_arc.len()).step_by(4) {
-                if i + 1 < pcm_arc.len() {
-                    let l = pcm_arc[i];
-                    let r = pcm_arc[i + 1];
-                    // right-shift by 8 bits to convert 24-bit to 16-bit
-                    lq_staging.push(l >> 8);
-                    lq_staging.push(r >> 8);
+                if i + 3 < pcm_arc.len() {
+                    // Simple low-pass filter (averaging adjacent samples)
+                    let l1 = pcm_arc[i];
+                    let r1 = pcm_arc[i + 1];
+                    let l2 = pcm_arc[i + 2];
+                    let r2 = pcm_arc[i + 3];
+
+                    // average and convert 24-bit to 16-bit
+                    let l_avg = (l1 / 2) + (l2 / 2);
+                    let r_avg = (r1 / 2) + (r2 / 2);
+
+                    lq_staging.push(l_avg >> 8);
+                    lq_staging.push(r_avg >> 8);
                 }
             }
 
@@ -91,6 +98,16 @@ impl ConverterTask {
                 self.segment_index = (self.segment_index + 1) % 100_000_000;
             }
         }
+
+        // Flush any remaining frames on shutdown
+        if self.frame_counter > 0 {
+            let hq_bytes = Bytes::copy_from_slice(&self.hq_accumulator);
+            let lq_bytes = Bytes::copy_from_slice(&self.lq_accumulator);
+
+            if let Err(_) = self.seg_tx.try_send((self.segment_index, hq_bytes, lq_bytes)) {
+                tracing::error!("WARN: seg_tx full, dropping final segment {}", self.segment_index);
+            }
+        }
     }
 }
 
@@ -104,24 +121,40 @@ mod tests {
         let mut lq_staging = Vec::new();
 
         for i in (0..input.len()).step_by(4) {
-            let l = input[i];
-            let r = input[i + 1];
-            lq_staging.push(l >> 8);
-            lq_staging.push(r >> 8);
+            if i + 3 < input.len() {
+                let l1 = input[i];
+                let r1 = input[i + 1];
+                let l2 = input[i + 2];
+                let r2 = input[i + 3];
+
+                let l_avg = (l1 / 2) + (l2 / 2);
+                let r_avg = (r1 / 2) + (r2 / 2);
+
+                lq_staging.push(l_avg >> 8);
+                lq_staging.push(r_avg >> 8);
+            }
         }
 
-        assert_eq!(lq_staging, vec![100 >> 8, 200 >> 8]);
+        assert_eq!(lq_staging, vec![((100 / 2) + (300 / 2)) >> 8, ((200 / 2) + (400 / 2)) >> 8]);
 
         // Verify negative numbers sign-extend properly
         let neg_input = vec![-32768, -1000, 0, 0];
         let mut lq_staging_neg = Vec::new();
         for i in (0..neg_input.len()).step_by(4) {
-            let l = neg_input[i];
-            let r = neg_input[i + 1];
-            lq_staging_neg.push(l >> 8);
-            lq_staging_neg.push(r >> 8);
+            if i + 3 < neg_input.len() {
+                let l1 = neg_input[i];
+                let r1 = neg_input[i + 1];
+                let l2 = neg_input[i + 2];
+                let r2 = neg_input[i + 3];
+
+                let l_avg = (l1 / 2) + (l2 / 2);
+                let r_avg = (r1 / 2) + (r2 / 2);
+
+                lq_staging_neg.push(l_avg >> 8);
+                lq_staging_neg.push(r_avg >> 8);
+            }
         }
-        assert_eq!(lq_staging_neg, vec![-32768 >> 8, -1000 >> 8]);
+        assert_eq!(lq_staging_neg, vec![((-32768 / 2) + (0 / 2)) >> 8, ((-1000 / 2) + (0 / 2)) >> 8]);
     }
 
     #[test]
@@ -147,8 +180,18 @@ mod tests {
 
             lq_staging.clear();
             for i in (0..pcm_arc.len()).step_by(4) {
-                lq_staging.push(pcm_arc[i] >> 8);
-                lq_staging.push(pcm_arc[i + 1] >> 8);
+                if i + 3 < pcm_arc.len() {
+                    let l1 = pcm_arc[i];
+                    let r1 = pcm_arc[i + 1];
+                    let l2 = pcm_arc[i + 2];
+                    let r2 = pcm_arc[i + 3];
+
+                    let l_avg = (l1 / 2) + (l2 / 2);
+                    let r_avg = (r1 / 2) + (r2 / 2);
+
+                    lq_staging.push(l_avg >> 8);
+                    lq_staging.push(r_avg >> 8);
+                }
             }
 
             let lq_frame = lq_encoder.encode_frame(&lq_staging, 0);

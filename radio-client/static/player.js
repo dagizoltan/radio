@@ -9,6 +9,7 @@ class RadioPlayer extends HTMLElement {
         this.worker = null;
         this._releaseLock = null;
         this.currentVolume = 1.0;
+        this.isVisualizerRunning = false;
 
         this.shadowRoot.innerHTML = `
             <style>
@@ -294,8 +295,20 @@ class RadioPlayer extends HTMLElement {
 
         if (!this.isLive) {
             this.updateBadge('OFFLINE');
-            return;
+        } else {
+            this.initWorker();
         }
+
+        this.playBtn.addEventListener('click', () => this.togglePlay());
+        this.unlockOverlay.addEventListener('click', () => this.unlockAudio());
+        this.volumeSlider.addEventListener('input', (e) => this.setVolume(e.target.value));
+
+        this.resizeCanvas();
+        window.addEventListener('resize', () => this.resizeCanvas());
+    }
+
+    initWorker() {
+        if (this.worker) return;
 
         this.worker = new Worker(new URL('./fetch_worker.js', import.meta.url), { type: 'module' });
         this.worker.onmessage = (e) => {
@@ -313,7 +326,9 @@ class RadioPlayer extends HTMLElement {
         this.worker.postMessage({ type: 'INIT', token: this.token, r2Url: this.r2Url });
 
         this.qualitySelect.addEventListener('change', (e) => {
-            this.worker.postMessage({ type: 'SET_QUALITY', quality: e.target.value });
+            if (this.worker) {
+                this.worker.postMessage({ type: 'SET_QUALITY', quality: e.target.value });
+            }
         });
 
         navigator.locks.request("radio-player-singleton", async (lock) => {
@@ -321,13 +336,6 @@ class RadioPlayer extends HTMLElement {
             this.updateBadge('LIVE');
             await new Promise(r => this._releaseLock = r);
         });
-
-        this.playBtn.addEventListener('click', () => this.togglePlay());
-        this.unlockOverlay.addEventListener('click', () => this.unlockAudio());
-        this.volumeSlider.addEventListener('input', (e) => this.setVolume(e.target.value));
-
-        this.resizeCanvas();
-        window.addEventListener('resize', () => this.resizeCanvas());
     }
 
     resizeCanvas() {
@@ -353,8 +361,11 @@ class RadioPlayer extends HTMLElement {
                 if (msg.startsWith('{')) {
                     const data = JSON.parse(msg);
                     if (data.type === 'metrics') {
-                        this.isLive = true;
-                        this.updateBadge('LIVE');
+                        if (!this.isLive) {
+                            this.isLive = true;
+                            this.updateBadge('LIVE');
+                            this.initWorker();
+                        }
                     }
                 } else {
                     this.trackTitle.textContent = msg;
@@ -400,6 +411,8 @@ class RadioPlayer extends HTMLElement {
                 });
                 this.workletNode.connect(this.analyser);
 
+                this.workletNode.port.postMessage({ type: 'SET_VOLUME', volume: this.currentVolume });
+
                 const channel = new MessageChannel();
                 channel.port2.onmessage = (e) => {
                     this.workletNode.port.postMessage(e.data, [e.data.buffer]);
@@ -430,19 +443,25 @@ class RadioPlayer extends HTMLElement {
             icon.innerHTML = '<path d="M6 19h4V5H6v14zm8-14v14h4V5h-4z"/>';
             this.statusText.textContent = 'Streaming Lossless';
             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'playing';
+            if (!this.isVisualizerRunning) {
+                this.renderVisualizer();
+            }
         } else {
             icon.innerHTML = '<path d="M8 5v14l11-7z"/>';
             this.statusText.textContent = 'Paused';
             if ('mediaSession' in navigator) navigator.mediaSession.playbackState = 'paused';
+            this.isVisualizerRunning = false;
         }
     }
 
     renderVisualizer() {
         if (!this.analyser) return;
+        this.isVisualizerRunning = true;
         const bufferLength = this.analyser.frequencyBinCount;
         const dataArray = new Uint8Array(bufferLength);
 
         const draw = () => {
+            if (!this.isVisualizerRunning) return;
             requestAnimationFrame(draw);
             this.analyser.getByteFrequencyData(dataArray);
 
