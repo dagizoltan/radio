@@ -4,6 +4,12 @@ pub struct BitWriter {
     bits_in_accumulator: u8,
 }
 
+impl Default for BitWriter {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl BitWriter {
     pub fn new() -> Self {
         BitWriter {
@@ -49,7 +55,7 @@ impl BitWriter {
             bits -= to_write;
 
             if bits < 64 {
-                val = val & ((1 << bits) - 1);
+                val &= (1 << bits) - 1;
             }
 
             while self.bits_in_accumulator >= 8 {
@@ -61,7 +67,7 @@ impl BitWriter {
 
             if self.bits_in_accumulator > 0 {
                 let mask = if self.bits_in_accumulator == 64 { u64::MAX } else { (1 << self.bits_in_accumulator) - 1 };
-                self.accumulator = self.accumulator & mask;
+                self.accumulator &= mask;
             } else {
                 self.accumulator = 0;
             }

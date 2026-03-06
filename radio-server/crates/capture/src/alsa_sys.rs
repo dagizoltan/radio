@@ -9,14 +9,9 @@ pub struct SndInterval {
 
 #[repr(C)]
 #[derive(Debug, Clone, Copy)]
+#[derive(Default)]
 pub struct SndMask {
     pub bits: [u32; 8],
-}
-
-impl Default for SndMask {
-    fn default() -> Self {
-        SndMask { bits: [0; 8] }
-    }
 }
 
 #[repr(C)]

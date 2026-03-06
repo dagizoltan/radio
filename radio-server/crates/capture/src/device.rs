@@ -124,13 +124,15 @@ impl Device {
         }
 
         // Apply Software Parameters to ensure EPOLL wakes up `AsyncFd` correctly
-        let mut sw_params = SndrPcmSwParams::default();
-        sw_params.avail_min = actual_period_size;
-        // By setting start_threshold to 1, we tell the ALSA driver to auto-start the stream
-        // as soon as it's read from or written to, avoiding hangs when manual START ioctl fails or is delayed.
-        sw_params.start_threshold = 1;
-        // A stop threshold helps prevent overruns hanging the stream
-        sw_params.stop_threshold = actual_period_size * 8;
+        let mut sw_params = SndrPcmSwParams {
+            avail_min: actual_period_size,
+            // By setting start_threshold to 1, we tell the ALSA driver to auto-start the stream
+            // as soon as it's read from or written to, avoiding hangs when manual START ioctl fails or is delayed.
+            start_threshold: 1,
+            // A stop threshold helps prevent overruns hanging the stream
+            stop_threshold: actual_period_size * 8,
+            ..Default::default()
+        };
 
         let sw_ret = unsafe { ioctl(fd, SNDRV_PCM_IOCTL_SW_PARAMS as _, &mut sw_params) };
         if sw_ret < 0 {

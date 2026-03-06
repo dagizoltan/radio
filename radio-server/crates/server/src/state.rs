@@ -25,6 +25,12 @@ pub struct AppState {
     pub waveform: Mutex<Vec<i16>>,
 }
 
+impl Default for AppState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl AppState {
     pub fn new() -> Self {
         let (sse_tx, _) = broadcast::channel(16);

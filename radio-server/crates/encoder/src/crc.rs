@@ -2,10 +2,16 @@ pub struct Crc8 {
     table: [u8; 256],
 }
 
+impl Default for Crc8 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Crc8 {
     pub fn new() -> Self {
         let mut table = [0u8; 256];
-        for i in 0..256 {
+        for (i, entry) in table.iter_mut().enumerate().take(256) {
             let mut crc = i as u8;
             for _ in 0..8 {
                 if crc & 0x80 != 0 {
@@ -14,7 +20,7 @@ impl Crc8 {
                     crc <<= 1;
                 }
             }
-            table[i] = crc;
+            *entry = crc;
         }
         Crc8 { table }
     }
@@ -32,10 +38,16 @@ pub struct Crc16 {
     table: [u16; 256],
 }
 
+impl Default for Crc16 {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl Crc16 {
     pub fn new() -> Self {
         let mut table = [0u16; 256];
-        for i in 0..256 {
+        for (i, entry) in table.iter_mut().enumerate().take(256) {
             let mut crc = (i as u16) << 8;
             for _ in 0..8 {
                 if crc & 0x8000 != 0 {
@@ -44,7 +56,7 @@ impl Crc16 {
                     crc <<= 1;
                 }
             }
-            table[i] = crc;
+            *entry = crc;
         }
         Crc16 { table }
     }

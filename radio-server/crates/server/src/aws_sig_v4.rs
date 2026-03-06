@@ -5,6 +5,7 @@ use hex;
 
 type HmacSha256 = Hmac<Sha256>;
 
+#[allow(clippy::too_many_arguments)]
 pub fn generate_sigv4(
     method: &str,
     uri: &str,
