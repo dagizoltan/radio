@@ -1,4 +1,4 @@
-use alsa::pcm::{PCM, HwParams, Format, Access};
+use alsa::pcm::{PCM, HwParams, Format};
 use alsa::Direction;
 
 fn main() {

@@ -88,7 +88,7 @@ impl ConverterTask {
                 let hq_bytes = Bytes::copy_from_slice(&self.hq_accumulator);
                 let lq_bytes = Bytes::copy_from_slice(&self.lq_accumulator);
 
-                if let Err(_) = self.seg_tx.try_send((self.segment_index, hq_bytes, lq_bytes)) {
+                if self.seg_tx.try_send((self.segment_index, hq_bytes, lq_bytes)).is_err() {
                     tracing::error!("WARN: seg_tx full, dropping segment {}", self.segment_index);
                 }
 
@@ -104,7 +104,7 @@ impl ConverterTask {
             let hq_bytes = Bytes::copy_from_slice(&self.hq_accumulator);
             let lq_bytes = Bytes::copy_from_slice(&self.lq_accumulator);
 
-            if let Err(_) = self.seg_tx.try_send((self.segment_index, hq_bytes, lq_bytes)) {
+            if self.seg_tx.try_send((self.segment_index, hq_bytes, lq_bytes)).is_err() {
                 tracing::error!("WARN: seg_tx full, dropping final segment {}", self.segment_index);
             }
         }

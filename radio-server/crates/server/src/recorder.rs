@@ -57,12 +57,10 @@ impl RecorderTask {
             let should_stream = self.state.streaming.load(Ordering::SeqCst);
             
             // Reconfigure if device changed
-            if desired_device != current_device_path {
-                if capture_loop.is_some() {
-                    let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Closing capture device: {}"}}"#, current_device_path));
-                    capture_loop = None;
-                    current_device_path = String::new();
-                }
+            if desired_device != current_device_path && capture_loop.is_some() {
+                let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","message":"Closing capture device: {}"}}"#, current_device_path));
+                capture_loop = None;
+                current_device_path = String::new();
             }
 
             if capture_loop.is_none() && current_device_path != desired_device {
@@ -263,7 +261,7 @@ impl RecorderTask {
 
             // Send ARC wrapper to ConverterTask
             let arc_pcm = Arc::new(pcm_data);
-            if let Err(_) = self.pcm_tx.try_send(arc_pcm) {
+            if self.pcm_tx.try_send(arc_pcm).is_err() {
                 tracing::error!("WARN: pcm_tx full, dropping PCM block to prevent block loop");
             }
         }

@@ -73,13 +73,27 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
             
             let wf = {
                 let wf_lock = metrics_state.waveform.lock().unwrap();
-                format!("{:?}", *wf_lock)
+                wf_lock.clone()
             };
 
-            let msg = format!(
-                r#"{{"type":"metrics","streaming":{streaming},"vu_left":{vu_left},"vu_right":{vu_right},"stream_vu_left":{stream_vu_left},"stream_vu_right":{stream_vu_right},"r2_segment":{r2_seg},"overruns":{overruns},"uploading":{uploading},"recording_bytes":{rec_bytes},"recording_start":{rec_start},"recording_path":"{rec_path}","waveform":{wf}}}"#
-            );
-            let _ = metrics_state.sse_tx.send(msg);
+            let msg = serde_json::json!({
+                "type": "metrics",
+                "streaming": streaming,
+                "vu_left": vu_left,
+                "vu_right": vu_right,
+                "stream_vu_left": stream_vu_left,
+                "stream_vu_right": stream_vu_right,
+                "r2_segment": r2_seg,
+                "overruns": overruns,
+                "uploading": uploading,
+                "recording_bytes": rec_bytes,
+                "recording_start": rec_start,
+                "recording_path": rec_path,
+                "waveform": wf
+            });
+
+            let msg_str = serde_json::to_string(&msg).unwrap();
+            let _ = metrics_state.sse_tx.send(msg_str);
         }
     });
 

@@ -208,7 +208,11 @@ impl UploaderTask {
     async fn write_state_file(&self, latest: u64) {
         let state_file = StateFile { latest };
         if let Ok(json) = serde_json::to_string(&state_file) {
-            let _ = tokio::fs::write("./recordings/state.json", json).await;
+            let tmp_path = "./recordings/state.json.tmp";
+            let final_path = "./recordings/state.json";
+            if tokio::fs::write(tmp_path, json).await.is_ok() {
+                let _ = tokio::fs::rename(tmp_path, final_path).await;
+            }
         }
     }
 
