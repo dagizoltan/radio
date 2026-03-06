@@ -11,6 +11,7 @@ services:
       - ./archive:/app/archive
       - ./recordings:/app/recordings
       - /proc/asound:/host/asound:ro
+      - /etc/localtime:/etc/localtime:ro
     # Pass through all ALSA sound device nodes from the host.
     # Note: /dev/snd is bind-mounted; discovery.rs scans it for pcmC*D*c capture nodes.
     devices:

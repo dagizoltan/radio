@@ -98,7 +98,7 @@ impl RecorderTask {
             }
             
             // Wait for ALSA readable event, or generate mock silence
-            let (mut pcm_data, overrun) = if let Some(loop_ref) = &capture_loop {
+            let (pcm_data, overrun) = if let Some(loop_ref) = &capture_loop {
                 // Relax timeout slightly to give sluggish external hardware time to fill buffers initially
                 match tokio::time::timeout(tokio::time::Duration::from_secs(3), loop_ref.read_period()).await {
                     Ok(Ok(res)) => res,
@@ -112,6 +112,8 @@ impl RecorderTask {
                         } else {
                             let _ = self.state.sse_tx.send(format!(r#"{{"type":"log","error":true,"message":"ALSA read err: {}"}}"#, e));
                             tokio::time::sleep(tokio::time::Duration::from_secs(1)).await;
+                            capture_loop = None;
+                            current_device_path = String::new(); // force reopen to recover from unrecoverable ALSA errors
                             continue;
                         }
                     }
@@ -190,15 +192,21 @@ impl RecorderTask {
                 }
             }
 
-            // Channel routing
+            // Channel routing for stream
             let desired_channel = { self.state.selected_channel.lock().unwrap().clone() };
+            let mut stream_pcm_data = pcm_data.clone();
+
             if desired_channel == "left" {
-                for i in (0..pcm_data.len()).step_by(2) {
-                    pcm_data[i+1] = pcm_data[i];
+                for i in (0..stream_pcm_data.len()).step_by(2) {
+                    if i+1 < stream_pcm_data.len() {
+                        stream_pcm_data[i+1] = stream_pcm_data[i];
+                    }
                 }
             } else if desired_channel == "right" {
-                for i in (0..pcm_data.len()).step_by(2) {
-                    pcm_data[i] = pcm_data[i+1];
+                for i in (0..stream_pcm_data.len()).step_by(2) {
+                    if i+1 < stream_pcm_data.len() {
+                        stream_pcm_data[i] = stream_pcm_data[i+1];
+                    }
                 }
             }
 
@@ -212,11 +220,13 @@ impl RecorderTask {
             // Calculate Stream VU after routing
             let mut s_max_l = 0;
             let mut s_max_r = 0;
-            for i in (0..pcm_data.len()).step_by(2) {
-                let l = pcm_data[i].abs();
-                let r = pcm_data[i+1].abs();
-                if l > s_max_l { s_max_l = l; }
-                if r > s_max_r { s_max_r = r; }
+            for i in (0..stream_pcm_data.len()).step_by(2) {
+                if i+1 < stream_pcm_data.len() {
+                    let l = stream_pcm_data[i].abs();
+                    let r = stream_pcm_data[i+1].abs();
+                    if l > s_max_l { s_max_l = l; }
+                    if r > s_max_r { s_max_r = r; }
+                }
             }
             self.state.stream_vu_left.store(s_max_l, Ordering::Relaxed);
             self.state.stream_vu_right.store(s_max_r, Ordering::Relaxed);
@@ -224,7 +234,9 @@ impl RecorderTask {
             // Need a rotation?
             if archive_file.is_none() || frames_in_file >= frames_per_hour {
                 if let Some(file) = archive_file.take() {
-                    let _ = file.sync_all(); // Fsync old file
+                    if let Err(e) = file.sync_all() {
+                        tracing::error!("Failed to sync archive file on rotation: {}", e);
+                    }
                 }
 
                 // Open new timestamped file
@@ -260,7 +272,7 @@ impl RecorderTask {
             frames_in_file += frames_read as u64;
 
             // Send ARC wrapper to ConverterTask
-            let arc_pcm = Arc::new(pcm_data);
+            let arc_pcm = Arc::new(stream_pcm_data);
             if self.pcm_tx.try_send(arc_pcm).is_err() {
                 tracing::error!("WARN: pcm_tx full, dropping PCM block to prevent block loop");
             }

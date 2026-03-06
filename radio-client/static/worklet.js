@@ -36,18 +36,20 @@ class RadioProcessor extends AudioWorkletProcessor {
                 const chunk = data;
                 const freeSpace = this.RING_BUFFER_SIZE - this.samplesAvailable;
 
+                let writeLength = chunk.length;
+
                 // Clock Drift Protection
                 if (chunk.length > freeSpace) {
                     this.port.postMessage({ type: "OVERFLOW", message: "Ring buffer overflow" });
-                    return; // Drop chunk
+                    writeLength = freeSpace; // Write as much as possible
                 }
 
                 // Write chunk to ring buffer
-                for (let i = 0; i < chunk.length; i++) {
+                for (let i = 0; i < writeLength; i++) {
                     this.ringBuffer[this.writePointer] = chunk[i];
                     this.writePointer = (this.writePointer + 1) % this.RING_BUFFER_SIZE;
                 }
-                this.samplesAvailable += chunk.length;
+                this.samplesAvailable += writeLength;
 
                 // Return buffer to pool
                 this.port.postMessage({ type: "RETURN_BUFFER", buffer: chunk.buffer }, [chunk.buffer]);

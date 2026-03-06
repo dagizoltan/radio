@@ -23,3 +23,4 @@ time = "0.3.36"
 libc = "0.2.182"
 tower-http = { version = "0.6.8", features = ["cors"] }
 roxmltree = "0.20.0"
+urlencoding = "2.1.3"
