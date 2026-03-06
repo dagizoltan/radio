@@ -143,7 +143,9 @@ impl UploaderTask {
                                     {
                                         if let Ok(idx) = idx_str.parse::<u64>() {
                                             if idx < max_index {
-                                                tracing::info!("Would delete old S3 segment: {}", key);
+                                                // Actually delete
+                                                tracing::info!("Deleting old S3 segment: {}", key);
+                                                Self::delete_s3_segment_static(&client, &bucket_prefix, prefix, idx).await;
                                             }
                                         }
                                     }
@@ -154,6 +156,53 @@ impl UploaderTask {
                 }
             }
         }
+    }
+
+    async fn delete_s3_segment_static(client: &Client, bucket_prefix: &str, quality_prefix: &str, index: u64) {
+        let uri = format!("{bucket_prefix}/{quality_prefix}segment-{index:08}.flac");
+
+        let access_key = std::env::var("R2_ACCESS_KEY").unwrap_or_else(|_| "test_access".to_string());
+        let secret_key = std::env::var("R2_SECRET_KEY").unwrap_or_else(|_| "test_secret".to_string());
+        let endpoint = std::env::var("R2_ENDPOINT").unwrap_or_else(|_| "https://test.s3.amazonaws.com".to_string());
+
+        let url = format!("{}{}", endpoint, uri);
+
+        let now = OffsetDateTime::now_utc();
+        let amz_date = format!(
+            "{:04}{:02}{:02}T{:02}{:02}{:02}Z",
+            now.year(), now.month() as u8, now.day(),
+            now.hour(), now.minute(), now.second()
+        );
+        let date_stamp = format!("{:04}{:02}{:02}", now.year(), now.month() as u8, now.day());
+
+        let payload_hash = hex::encode(Sha256::digest(b""));
+
+        let mut headers = BTreeMap::new();
+        let host = url.replace("https://", "").replace("http://", "").split('/').next().unwrap_or("").to_string();
+        headers.insert("Host".to_string(), host);
+        headers.insert("x-amz-date".to_string(), amz_date.clone());
+        headers.insert("x-amz-content-sha256".to_string(), payload_hash.clone());
+
+        let (auth_header, _) = generate_sigv4(
+            "DELETE",
+            &uri,
+            "",
+            &headers,
+            &payload_hash,
+            &access_key,
+            &secret_key,
+            "us-east-1",
+            "s3",
+            &amz_date,
+            &date_stamp,
+        );
+
+        let req = client.delete(&url)
+            .header("x-amz-date", &amz_date)
+            .header("x-amz-content-sha256", payload_hash)
+            .header("Authorization", auth_header);
+
+        let _ = req.send().await;
     }
 
     async fn write_state_file(&self, latest: u64) {
